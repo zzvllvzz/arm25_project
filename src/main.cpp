@@ -4,18 +4,90 @@
 #include "task.h"
 #include "semphr.h"
 #include "hardware/gpio.h"
+#include "PicoI2C.h"
 #include "PicoOsUart.h"
 #include "ssd1306.h"
-
-
 #include "hardware/timer.h"
+#include "blinker.h"
+
+
+
+
 extern "C" {
 uint32_t read_runtime_ctr(void) {
     return timer_hw->timerawl;
 }
 }
 
-#include "blinker.h"
+static constexpr uint8_t SDP610_ADDR = 0x40;     // 7-bit address (64 decimal)
+static constexpr uint8_t CMD_MEASURE  = 0xF1;    // trigger differential pressure measurement
+static constexpr uint8_t CMD_SOFT_RST = 0xFE;    // soft reset (datasheet)
+static constexpr float   SCALE_125PA  = 240.0f;  // scale factor for SDP610-125Pa
+
+// CRC-8 for SF04 (SDP600 family): polynomial x^8 + x^5 + x^4 + 1 (0x31),
+// CRC register initialised to 0x00 — implemented bitwise (per Sensirion app note).
+static uint8_t sdp_crc8(const uint8_t *data, size_t len) {
+    uint8_t crc = 0x00;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= data[i];
+        for (uint8_t b = 0; b < 8; ++b) {
+            if (crc & 0x80) crc = (uint8_t)((crc << 1) ^ 0x31);
+            else            crc <<= 1;
+        }
+    }
+    return crc;
+}
+
+// Read one measurement. Returns true on success (raw_out filled), false on error.
+static bool sdp610_read_raw(std::shared_ptr<PicoI2C> i2c, int16_t &raw_out) {
+    uint8_t cmd = CMD_MEASURE;
+    uint8_t rx[3] = {0,0,0};
+    // transaction(addr, write_buf, write_len, read_buf, read_len)
+    int rv = i2c->transaction(SDP610_ADDR, &cmd, 1, rx, 3); // read 2 bytes + CRC (if master clocks it)
+    if (rv < 2) return false; // no data
+    // If the sensor provided a CRC byte (rv >= 3) verify it
+    if (rv >= 3) {
+        uint8_t calc = sdp_crc8(rx, 2);
+        if (calc != rx[2]) {
+            // CRC mismatch: try soft reset (recommended by app note) and fail
+            uint8_t rst = CMD_SOFT_RST;
+            i2c->write(SDP610_ADDR, &rst, 1);
+            return false;
+        }
+    }
+    // assemble signed 16-bit two's complement (MSB first)
+    raw_out = static_cast<int16_t>((rx[0] << 8) | rx[1]);
+    return true;
+}
+
+static float sdp610_raw_to_pa(int16_t raw) {
+    return static_cast<float>(raw) / SCALE_125PA;
+}
+
+// datasheet: DPeff = DPsensor * (Pcal / Pamb), Pcal = 966 mbar (sensor calibration pressure)
+float apply_altitude_correction(float dp_pa, float ambient_mbar) {
+    const float Pcal = 966.0f;
+    return dp_pa * (Pcal / ambient_mbar);
+}
+
+
+// Example FreeRTOS task: reads every 250 ms and prints Pa
+void sdp610_task(void *param) {
+    (void)param;
+    // Use I2C1: in the project display and the pressure sensor share I2C1 (SDA=14, SCL=15).
+    auto i2c = std::make_shared<PicoI2C>(1, 100000); // 100 kHz (or 400000 if you prefer - datasheet allows up to 400 kHz)
+    int16_t raw;
+    while (true) {
+        if (sdp610_read_raw(i2c, raw)) {
+            float pa = sdp610_raw_to_pa(raw);
+            float dp_pa = apply_altitude_correction(pa, 1013);
+            printf("SDP610 raw=%d -> %.3f Pa. Altitude Correction: %.3f\n", raw, pa, dp_pa);
+        } else {g
+            printf("SDP610 read failed or CRC mismatch\n");
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
 
 SemaphoreHandle_t gpio_sem;
 
@@ -121,8 +193,11 @@ int main()
     gpio_sem = xSemaphoreCreateBinary();
     //xTaskCreate(blink_task, "LED_1", 256, (void *) &lp1, tskIDLE_PRIORITY + 1, nullptr);
     //xTaskCreate(gpio_task, "BUTTON", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(serial_task, "UART1", 256, (void *) nullptr,
+    //xTaskCreate(serial_task, "UART0", 256, (void *) nullptr,
     //            tskIDLE_PRIORITY + 1, nullptr);
+    //xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
+    //            tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(sdp610_task, "SDP610", 512, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 #if 0
     xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
                 tskIDLE_PRIORITY + 1, nullptr);
@@ -214,6 +289,7 @@ void display_task(void *param)
     ssd1306os display(i2cbus);
     display.fill(0);
     display.text("Boot", 0, 0);
+    display.text("Sampo on homo", 0,25);
     display.show();
     while(true) {
         vTaskDelay(100);
