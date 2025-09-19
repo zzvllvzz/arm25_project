@@ -6,8 +6,8 @@ add_executable(${ProjectName}
         blinker.cpp
         blinker.h
 
-#        ipstack/IPStack.cpp
-#        ipstack/IPStack.h
+#       ipstack/IPStack.cpp
+#       ipstack/IPStack.h
         ipstack/lwipopts.h
         ipstack/tls_common.c
         ipstack/picow_tls_client.c
@@ -30,8 +30,8 @@ add_executable(${ProjectName}
         display/framebuf.h
         display/mono_vlsb.cpp
         display/mono_vlsb.h
-#        display/ssd1306.cpp
-#        display/ssd1306.h
+#       display/ssd1306.cpp
+#       display/ssd1306.h
         display/ssd1306os.h
         display/ssd1306os.cpp
         sdp610.cpp
