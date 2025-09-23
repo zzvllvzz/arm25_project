@@ -173,12 +173,12 @@ void modbus_task(void *param) {
     const uint led_pin = 22;
     const uint button = 9;
 
-    ModbusRegister co2(rtu_client, 240, 257);
-    Gmp252_co2 gmp252 (rtu_client,240);
+    ModbusRegister co2(rtu_client, 240, 256); // register number from datasheet -1
+    Gmp252_co2 gmp252 (rtu_client,240); // Register starting from 1 in datasheet and in program it starts from 0
     while (true) {
         auto data=gmp252.read_co2();
         if (data.status) {
-            printf("Co2 =%.1f %%   ", data.co2_data);
+            printf("Co2 =%f %%   ", data.co2_data);
         }else {
             printf("HMP60 read failed\n");
         }

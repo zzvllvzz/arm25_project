@@ -20,11 +20,11 @@ struct Gmp252_data {
 class Gmp252_co2 {
     public:
     explicit Gmp252_co2(std::shared_ptr<ModbusClient> &client, const int slave_addr = 240)
-        : co2_req(client,slave_addr, 258){}
+        : co2_req(client,slave_addr, 256){}
 // read function which returns  data in a struct
     Gmp252_data read_co2() {
         Gmp252_data data;
-        float raw_data = co2_req.read();
+       float raw_data = co2_req.read();
         // to do add filter
         if (raw_data < 0  || raw_data > 32000  ) {
             data.status = false;
