@@ -123,7 +123,7 @@ int main()
     //xTaskCreate(gpio_task, "BUTTON", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
     //xTaskCreate(serial_task, "UART1", 256, (void *) nullptr,
     //            tskIDLE_PRIORITY + 1, nullptr);
-#if 0
+#if 1
     xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
                 tskIDLE_PRIORITY + 1, nullptr);
 
@@ -147,6 +147,7 @@ int main()
 #include <cstdio>
 #include "ModbusClient.h"
 #include "ModbusRegister.h"
+#include "Gmp252.h"
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
 // datasheet for information on which other pins can be used.
@@ -167,9 +168,22 @@ int main()
 
 void modbus_task(void *param) {
 
+    auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
+    auto rtu_client{std::make_shared<ModbusClient>(uart)};
     const uint led_pin = 22;
     const uint button = 9;
 
+    ModbusRegister co2(rtu_client, 240, 257);
+    Gmp252_co2 gmp252 (rtu_client,240);
+    while (true) {
+        auto data=gmp252.read_co2();
+        if (data.status) {
+            printf("Co2 =%.1f %%   ", data.co2_data);
+        }else {
+            printf("HMP60 read failed\n");
+        }
+        vTaskDelay(1000);
+    }
     // Initialize LED pin
     gpio_init(led_pin);
     gpio_set_dir(led_pin, GPIO_OUT);
@@ -183,23 +197,22 @@ void modbus_task(void *param) {
 
     //printf("\nBoot\n");
 
-#ifdef USE_MODBUS
-    auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
-    auto rtu_client{std::make_shared<ModbusClient>(uart)};
-    ModbusRegister rh(rtu_client, 241, 256);
-    ModbusRegister t(rtu_client, 241, 257);
-    ModbusRegister produal(rtu_client, 1, 0);
-    produal.write(100);
-    vTaskDelay((100));
-    produal.write(100);
-#endif
+// #ifdef USE_MODBUS
+//     // auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
+//     // auto rtu_client{std::make_shared<ModbusClient>(uart)};
+//     ModbusRegister rh(rtu_client, 241, 256);
+//     ModbusRegister t(rtu_client, 241, 257);
+//     ModbusRegister produal(rtu_client, 1, 0);
+//     produal.write(100);
+//     vTaskDelay((100));
+//     produal.write(100);
+// #endif
 
     while (true) {
 #ifdef USE_MODBUS
         gpio_put(led_pin, !gpio_get(led_pin)); // toggle  led
-        printf("RH=%5.1f%%\n", rh.read() / 10.0);
+        printf("RH=%5.1f%%\n", co2.read() / 10.0);
         vTaskDelay(5);
-        printf("T =%5.1f%%\n", t.read() / 10.0);
         vTaskDelay(3000);
 #endif
     }
