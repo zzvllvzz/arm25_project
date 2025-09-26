@@ -7,7 +7,6 @@
 #include "PicoOsUart.h"
 #include "ssd1306.h"
 
-
 #include "hardware/timer.h"
 extern "C" {
 uint32_t read_runtime_ctr(void) {
@@ -148,6 +147,8 @@ int main()
 #include "ModbusClient.h"
 #include "ModbusRegister.h"
 #include "Gmp252.h"
+#include "hmp60.h"
+#include "Manager.h"
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
 // datasheet for information on which other pins can be used.
@@ -168,56 +169,53 @@ int main()
 
 void modbus_task(void *param) {
 
-    auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
-    auto rtu_client{std::make_shared<ModbusClient>(uart)};
-    const uint led_pin = 22;
-    const uint button = 9;
+    Manager modbus_manager;
 
-    ModbusRegister co2(rtu_client, 240, 256); // register number from datasheet -1
-    Gmp252_co2 gmp252 (rtu_client,240); // Register starting from 1 in datasheet and in program it starts from 0
-    while (true) {
-        auto data=gmp252.read_co2();
-        if (data.status) {
-            printf("Co2 =%f %%   ", data.co2_data);
-        }else {
-            printf("HMP60 read failed\n");
+
+   for(;;) {
+           auto data = modbus_manager.read_data();
+       if (data.status) {
+               printf("CO2 = %.1f ppm, RH = %.1f %%, T = %.1f C\n",
+                      data.co2_data, data.hmp60_rh, data.hmp60_t);
+        } else {
+            printf("Unable to read the data");
         }
-        vTaskDelay(1000);
-    }
-    // Initialize LED pin
-    gpio_init(led_pin);
-    gpio_set_dir(led_pin, GPIO_OUT);
+       vTaskDelay(2000); 
 
-    gpio_init(button);
-    gpio_set_dir(button, GPIO_IN);
-    gpio_pull_up(button);
-
-    // Initialize chosen serial port
-    //stdio_init_all();
-
-    //printf("\nBoot\n");
-
-// #ifdef USE_MODBUS
-//     // auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
-//     // auto rtu_client{std::make_shared<ModbusClient>(uart)};
-//     ModbusRegister rh(rtu_client, 241, 256);
-//     ModbusRegister t(rtu_client, 241, 257);
-//     ModbusRegister produal(rtu_client, 1, 0);
-//     produal.write(100);
-//     vTaskDelay((100));
-//     produal.write(100);
-// #endif
-
-    while (true) {
-#ifdef USE_MODBUS
-        gpio_put(led_pin, !gpio_get(led_pin)); // toggle  led
-        printf("RH=%5.1f%%\n", co2.read() / 10.0);
-        vTaskDelay(5);
-        vTaskDelay(3000);
-#endif
-    }
+    // client and uart connection
+    // auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
+    // auto rtu_client{std::make_shared<ModbusClient>(uart)};
+    //
+    // // co2 and hmp60 sensor
+    // ModbusRegister rh(rtu_client, 241, 256);
+    // ModbusRegister t(rtu_client, 241, 257);
+    // Hmp60sensor hmp60_sensor(rtu_client,241);
+    //
+    // ModbusRegister co2(rtu_client, 240, 256); // register number from datasheet -1
+    // Gmp252_co2 gmp252 (rtu_client,240); // Register starting from 1 in datasheet and in program it starts from 0
 
 
+    // while (true) {
+    //     auto data=gmp252.read_co2();
+    //
+    //     if (data.status) {
+    //         printf("Co2 in ppm =%.f \n", data.co2_data);
+    //     }else {
+    //         printf("co2 read failed\n");
+    //         printf("Error code recived: " , data.err);
+    //     }
+    //
+    //     auto hmp60_data = hmp60_sensor.read();
+    //
+    //     if (hmp60_data.ok) {
+    //         printf("RH=%.1f %%   T=%.1f C\n", hmp60_data.rh, hmp60_data.t);
+    //     }else {
+    //         printf("Hmp60 read failed\n");
+    //     }
+    //     vTaskDelay(1000);
+    // }
+
+}
 }
 
 #include "ssd1306os.h"
@@ -270,3 +268,4 @@ void i2c_task(void *param) {
 
 
 }
+

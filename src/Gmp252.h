@@ -9,12 +9,13 @@
 #ifndef GMP252_H
 #define GMP252_H
 
-#endif //GMP252_H
-
+// basic error codes
+enum ErrorCode {None, Range};
 
 struct Gmp252_data {
     float co2_data;
     bool status;
+    ErrorCode err;
 } ;
 
 class Gmp252_co2 {
@@ -25,16 +26,29 @@ class Gmp252_co2 {
     Gmp252_data read_co2() {
         Gmp252_data data;
        float raw_data = co2_req.read();
-        // to do add filter
-        if (raw_data < 0  || raw_data > 32000  ) {
+        //filtering data
+
+        if (raw_data < 0 || raw_data > co2_max) {
             data.status = false;
+            data.err = ErrorCode::Range;
+            data.co2_data = 0;
+            return data;
         }
+
        data.co2_data = raw_data;
         data.status = true;
+        data.err = None;
         return data;
     }
 
+
+
 private:
     ModbusRegister co2_req;
+    
+    int co2_max = 2000; // set in the project documentation
+
 
 };
+
+#endif GMP252_H
