@@ -8,6 +8,7 @@
 
 #ifndef GMP252_H
 #define GMP252_H
+#define valve_pin 27
 
 // basic error codes
 enum ErrorCode {None, Range};
@@ -40,8 +41,6 @@ class Gmp252_co2 {
         data.err = None;
         return data;
     }
-
-
 
 private:
     ModbusRegister co2_req;

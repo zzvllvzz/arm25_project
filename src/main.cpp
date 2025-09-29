@@ -17,6 +17,7 @@ uint32_t read_runtime_ctr(void) {
 #include "blinker.h"
 
 SemaphoreHandle_t gpio_sem;
+QueueHandle_t data_queue;
 
 void gpio_callback(uint gpio, uint32_t events) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -172,48 +173,9 @@ void modbus_task(void *param) {
     Manager modbus_manager;
 
 
+
    for(;;) {
-           auto data = modbus_manager.read_data();
-       if (data.status) {
-               printf("CO2 = %.1f ppm, RH = %.1f %%, T = %.1f C\n",
-                      data.co2_data, data.hmp60_rh, data.hmp60_t);
-        } else {
-            printf("Unable to read the data");
-        }
-       vTaskDelay(2000); 
 
-    // client and uart connection
-    // auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
-    // auto rtu_client{std::make_shared<ModbusClient>(uart)};
-    //
-    // // co2 and hmp60 sensor
-    // ModbusRegister rh(rtu_client, 241, 256);
-    // ModbusRegister t(rtu_client, 241, 257);
-    // Hmp60sensor hmp60_sensor(rtu_client,241);
-    //
-    // ModbusRegister co2(rtu_client, 240, 256); // register number from datasheet -1
-    // Gmp252_co2 gmp252 (rtu_client,240); // Register starting from 1 in datasheet and in program it starts from 0
-
-
-    // while (true) {
-    //     auto data=gmp252.read_co2();
-    //
-    //     if (data.status) {
-    //         printf("Co2 in ppm =%.f \n", data.co2_data);
-    //     }else {
-    //         printf("co2 read failed\n");
-    //         printf("Error code recived: " , data.err);
-    //     }
-    //
-    //     auto hmp60_data = hmp60_sensor.read();
-    //
-    //     if (hmp60_data.ok) {
-    //         printf("RH=%.1f %%   T=%.1f C\n", hmp60_data.rh, hmp60_data.t);
-    //     }else {
-    //         printf("Hmp60 read failed\n");
-    //     }
-    //     vTaskDelay(1000);
-    // }
 
 }
 }
