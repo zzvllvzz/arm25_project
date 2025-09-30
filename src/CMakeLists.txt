@@ -35,6 +35,8 @@ add_executable(${ProjectName}
         display/ssd1306os.h
         display/ssd1306os.cpp
         Gmp252.h
+        eeprom.cpp
+        eeprom.h
         Manager.h
 )
 

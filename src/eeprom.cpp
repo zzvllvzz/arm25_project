@@ -1,6 +1,10 @@
 #include "eeprom.h"
 #include <cstdio>
 
+#include "queue.h"
+
+extern QueueHandle_t command_queue;
+
 EEPROM_24C256::EEPROM_24C256(i2c_inst_t *i2c_instance, uint8_t addr)
     : i2c(i2c_instance), device_addr(addr) {
 }
@@ -126,7 +130,6 @@ bool EEPROM_24C256::read_co2_setpoint(uint16_t &ppm) {
     return false;
 }
 
-// FreeRTOS task
 void eeprom_test_task(void *param) {
     (void)param;
 
@@ -142,50 +145,44 @@ void eeprom_test_task(void *param) {
     EEPROM_24C256 eeprom(i2c0);
 
     // Test communication
-    if(eeprom.test_communication()) {
-        printf("EEPROM communication OK\n");
-    } else {
+    if(!eeprom.test_communication()) {
         printf("EEPROM communication FAILED\n");
+        eeprom.scan_bus();
         vTaskDelete(NULL);
     }
+    printf("EEPROM communication OK\n");
 
-    uint16_t setpoints[] = {400, 600, 800, 1000, 1200};
-    size_t idx = 0;
-
-    // Try to read existing setpoint first
+    // Read existing setpoint on startup
     uint16_t current_ppm;
     if(eeprom.read_co2_setpoint(current_ppm)) {
-        printf("Current CO2 setpoint: %u ppm\n", current_ppm);
+        printf("Stored CO2 setpoint: %u ppm\n", current_ppm);
+        // Send to command queue for system use
+        float setpoint_float = (float)current_ppm;
+        xQueueOverwrite(command_queue, &setpoint_float);
     } else {
-        printf("No existing setpoint found\n");
+        printf("No stored setpoint, initializing with 400 ppm\n");
+        eeprom.write_co2_setpoint(400);
     }
 
+    // Main loop - store new setpoints from queue
+    float new_setpoint;
     while(true) {
-        uint16_t new_ppm = setpoints[idx];
+        if(xQueueReceive(command_queue, &new_setpoint, portMAX_DELAY) == pdPASS) {
+            uint16_t ppm_to_store = (uint16_t)new_setpoint;
 
-        printf("Writing new CO2 setpoint: %u ppm... ", new_ppm);
-        if(eeprom.write_co2_setpoint(new_ppm)) {
-            printf("SUCCESS\n");
-        } else {
-            printf("FAILED\n");
-        }
+            printf("EEPROM: Storing %u ppm... ", ppm_to_store);
 
-        vTaskDelay(pdMS_TO_TICKS(50)); // Wait for write cycle
+            if(eeprom.write_co2_setpoint(ppm_to_store)) {
+                printf("Success\n");
 
-        uint16_t verify_ppm;
-        printf("Reading back to verify... ");
-        if(eeprom.read_co2_setpoint(verify_ppm)) {
-            printf("%u ppm - ", verify_ppm);
-            if(verify_ppm == new_ppm) {
-                printf("MATCH\n");
+                // Optional verification
+                uint16_t verify_ppm;
+                if(eeprom.read_co2_setpoint(verify_ppm) && verify_ppm == ppm_to_store) {
+                    printf("EEPROM: Verified OK\n");
+                }
             } else {
-                printf("MISMATCH!\n");
+                printf("Failed!\n");
             }
-        } else {
-            printf("READ FAILED\n");
         }
-
-        idx = (idx + 1) % (sizeof(setpoints)/sizeof(setpoints[0]));
-        vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay between tests
     }
 }
