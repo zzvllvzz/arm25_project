@@ -6,8 +6,8 @@ add_executable(${ProjectName}
         blinker.cpp
         blinker.h
 
-#        ipstack/IPStack.cpp
-#        ipstack/IPStack.h
+        #        ipstack/IPStack.cpp
+        #        ipstack/IPStack.h
         ipstack/lwipopts.h
         ipstack/tls_common.c
         ipstack/picow_tls_client.c
@@ -30,14 +30,16 @@ add_executable(${ProjectName}
         display/framebuf.h
         display/mono_vlsb.cpp
         display/mono_vlsb.h
-#        display/ssd1306.cpp
-#        display/ssd1306.h
+        #        display/ssd1306.cpp
+        #        display/ssd1306.h
         display/ssd1306os.h
         display/ssd1306os.cpp
+        Gmp252.h
+        Manager.h
 )
 
 target_include_directories(${ProjectName} PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}
         modbus
         uart
         i2c
@@ -52,7 +54,7 @@ target_compile_definitions(${ProjectName} PRIVATE
         PICO_CYW43_ARCH_DEFAULT_COUNTRY_CODE=CYW43_COUNTRY_FINLAND
 )
 
-target_link_libraries(${ProjectName} 
+target_link_libraries(${ProjectName}
         pico_stdlib
         hardware_i2c
         FreeRTOS-Kernel-Heap4
