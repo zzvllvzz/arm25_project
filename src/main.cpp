@@ -173,7 +173,15 @@ void modbus_task(void *param) {
     (void)param;
     Manager modbus_manager;
     for(;;) {
+        float new_user_level;
         all_data d = modbus_manager.read_data();
+
+
+        if (xQueueReceive(command_queue, &new_user_level, 0)==pdTRUE){
+            printf("new_user_level: %f\n", new_user_level);
+            d.user_set_level = new_user_level;
+        }
+
 
         if (d.user_set_level > d.co2_data) {
             printf("CO2 below user set limit opening the valve\n");
@@ -211,6 +219,8 @@ void display_task(void *param)
             display.text(line,0,10);
             snprintf(line,sizeof(line),"T: %.1f C",d.hmp60_t);
             display.text(line,0,20);
+            sniprintf(line, sizeof(line), "user : %.1f ppm", d.user_set_level);
+            display.text(line, 0, 30);
             display.show();
         }
         vTaskDelay(pdMS_TO_TICKS(10));
