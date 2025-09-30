@@ -69,8 +69,9 @@ public:
 
 
     // prototype needs work
-    all_data valve_open(uint32_t max_cycles = 3) {
+    all_data valve_open(float desired_ppm, int open_ms = 1900, int set_ms = 100) {
         all_data data = read_data();
+        data.user_set_level = desired_ppm;
 
             // if sensor read failed, break early
             if (!data.status) {
@@ -86,11 +87,11 @@ public:
 
             // open the valve and keep it open while we wait
             gpio_put(valve_pin, 1);
-            vTaskDelay(pdMS_TO_TICKS(1900));
+            vTaskDelay(pdMS_TO_TICKS(open_ms));
             //let the co2 levels even out
             //close the valve
             gpio_put(valve_pin, 0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(set_ms));
             //close the valve
             data = read_data();
 

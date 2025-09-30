@@ -1,11 +1,5 @@
 #include <iostream>
 #include <sstream>
-#include <cstdio>
-#include "ModbusClient.h"
-#include "ModbusRegister.h"
-#include "Gmp252.h"
-#include "hmp60.h"
-#include "eeprom.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -15,6 +9,7 @@
 #include "ssd1306.h"
 #include "hardware/timer.h"
 #include "Manager.h"
+#include "eeprom.h"
 
 #define BAUD_RATE 9600
 #define STOP_BITS 2 // for real system (pico simualtor also requires 2 stop bits)
@@ -29,7 +24,7 @@ uint32_t read_runtime_ctr(void) {
 
 SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
-QueueHandle_t command_queue;
+QueueHandle_t user_queue;
 
 // void gpio_callback(uint gpio, uint32_t events) {
 //     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -153,7 +148,7 @@ void user_input_task(void *params) {
                         if (new_limit > CO2_MAX)  new_limit = CO2_MAX;
 
                         // send to queue (float)
-                        if (xQueueOverwrite(command_queue, &new_limit) == pdPASS) {
+                        if (xQueueSend(user_queue, &new_limit, portMAX_DELAY) == pdPASS) {
                             printf("\n[OK] new CO2 limit: %.1f ppm\n", new_limit);
                         } else {
                             printf("\n[ERR] queue send failed\n");
