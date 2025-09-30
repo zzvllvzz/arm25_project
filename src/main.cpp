@@ -183,7 +183,7 @@ int main()
     printf("\nBoot\n");
 
     data_queue = xQueueCreate(1, sizeof(all_data));
-    command_queue = xQueueCreate(1, sizeof(float));
+    user_queue = xQueueCreate(1, sizeof(float));
 
     gpio_sem = xSemaphoreCreateBinary();
 
