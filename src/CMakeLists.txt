@@ -36,6 +36,8 @@ add_executable(${ProjectName}
         display/ssd1306os.cpp
         sdp610.cpp
         sdp610.h
+        eeprom.h
+        eeprom.cpp
 )
 
 target_include_directories(${ProjectName} PRIVATE
