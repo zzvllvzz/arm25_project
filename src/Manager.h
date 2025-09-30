@@ -17,7 +17,7 @@ struct all_data {
    float co2_data;
     float hmp60_rh;
     float hmp60_t;
-    float user_set_level = 1450;
+    float user_set_level = 2000;
     bool status;
     uint32_t timestamp;
 
@@ -43,7 +43,6 @@ public:
 
       // prototype read funtion
       all_data read_data() {
-        for (;;) {
             auto c  = co2.read_co2(); // {co2_data, status, ...}
             auto ht = hmp.read();     // {rh, t, ok}
 
@@ -55,35 +54,54 @@ public:
             data.hmp60_t   = ht.t;
             data.status    = (c.status && ht.ok);
             data.timestamp = xTaskGetTickCount();
-            
+
             return data;
 
-        }
+
+
     }
 
 
 
-    void valve_control(float fan_speed) {
+    void fan_control(float fan_speed) {
 
     }
+
 
     // prototype needs work
-     all_data valve_open() {
-
-
-       // check the co2 levels
+    all_data valve_open(uint32_t max_cycles = 3) {
         all_data data = read_data();
-        // we keep opening the valve until we are above the user set level
-        while (data.user_set_level > data.co2_data) {
+
+            // if sensor read failed, break early
+            if (!data.status) {
+                printf("valve_open: sensor read failed\n");
+               return data;
+            }
+
+            if (data.co2_data >= data.user_set_level) {
+                printf("valve_open: target reached (%.1f ppm)\n", data.co2_data);
+
+                return data;
+            }
+
+            // open the valve and keep it open while we wait
             gpio_put(valve_pin, 1);
-            vTaskDelay(2000);
-            data = read_data();
+            vTaskDelay(pdMS_TO_TICKS(1900));
+            //let the co2 levels even out
+            //close the valve
             gpio_put(valve_pin, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            //close the valve
+            data = read_data();
 
-        }
+        // make sure valve is closed at the end
+        gpio_put(valve_pin, 0);
         return data;
-
     }
+
+
+
+
 
 private:
 

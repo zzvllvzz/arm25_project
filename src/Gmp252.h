@@ -20,23 +20,23 @@ struct Gmp252_data {
 } ;
 
 class Gmp252_co2 {
-    public:
+public:
     explicit Gmp252_co2(std::shared_ptr<ModbusClient> &client, const int slave_addr = 240)
         : co2_req(client,slave_addr, 256){}
-// read function which returns  data in a struct
+    // read function which returns  data in a struct
     Gmp252_data read_co2() {
         Gmp252_data data;
-       float raw_data = co2_req.read();
+        float raw_data = co2_req.read();
         //filtering data
 
-        if (raw_data < 0 || raw_data > co2_max) {
+        if (raw_data < 0) {
             data.status = false;
             data.err = ErrorCode::Range;
             data.co2_data = 0;
             return data;
         }
 
-       data.co2_data = raw_data;
+        data.co2_data = raw_data;
         data.status = true;
         data.err = None;
         return data;
@@ -44,7 +44,7 @@ class Gmp252_co2 {
 
 private:
     ModbusRegister co2_req;
-    
+
     int co2_max = 2000; // set in the project documentation
 
 
