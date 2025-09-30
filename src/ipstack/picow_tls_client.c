@@ -46,8 +46,8 @@ MrY=\n\
 
 extern bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *server, const char *request, int timeout);
 
-//#define WIFI_SSID "SmartIotMQTT"
-//#define WIFI_PASSWORD "SmartIot"
+// #define WIFI_SSID "test"
+// #define WIFI_PASSWORD "thk12345"
 
 void tls_test(void) {
     //stdio_init_all();
