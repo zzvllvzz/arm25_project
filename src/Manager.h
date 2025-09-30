@@ -17,7 +17,7 @@ struct all_data {
    float co2_data;
     float hmp60_rh;
     float hmp60_t;
-    float user_set_level = 2000;
+    float user_set_level;
     bool status;
     uint32_t timestamp;
 
