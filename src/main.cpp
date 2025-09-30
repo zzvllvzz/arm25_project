@@ -29,23 +29,6 @@ void gpio_callback(uint gpio, uint32_t events) {
 }
 
 
-
-
-// void blink_task(void *param)
-// {
-//     auto lpr = (led_params *) param;
-//     const uint led_pin = lpr->pin;
-//     const uint delay = pdMS_TO_TICKS(lpr->delay);
-//     gpio_init(led_pin);
-//     gpio_set_dir(led_pin, GPIO_OUT);
-//     while (true) {
-//         gpio_put(led_pin, true);
-//         vTaskDelay(delay);
-//         gpio_put(led_pin, false);
-//         vTaskDelay(delay);
-//     }
-// }
-
 void gpio_task(void *param) {
     (void) param;
     const uint button_pin = 9;
