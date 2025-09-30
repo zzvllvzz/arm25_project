@@ -8,15 +8,12 @@
 
 #ifndef GMP252_H
 #define GMP252_H
-#define valve_pin 27
 
 // basic error codes
-enum ErrorCode {None, Range};
 
 struct Gmp252_data {
     float co2_data;
     bool status;
-    ErrorCode err;
 } ;
 
 class Gmp252_co2 {
@@ -31,14 +28,12 @@ public:
 
         if (raw_data < 0) {
             data.status = false;
-            data.err = ErrorCode::Range;
             data.co2_data = 0;
             return data;
         }
 
         data.co2_data = raw_data;
         data.status = true;
-        data.err = None;
         return data;
     }
 

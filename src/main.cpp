@@ -8,6 +8,7 @@
 #include "ssd1306.h"
 #include "hardware/timer.h"
 #include "Manager.h"
+#include "eeprom.h"
 
 extern "C" {
 uint32_t read_runtime_ctr(void) {
@@ -19,7 +20,7 @@ uint32_t read_runtime_ctr(void) {
 
 SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
-QueueHandle_t command_queue;
+QueueHandle_t user_queue;
 
 void gpio_callback(uint gpio, uint32_t events) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -30,21 +31,6 @@ void gpio_callback(uint gpio, uint32_t events) {
 
 
 
-
-// void blink_task(void *param)
-// {
-//     auto lpr = (led_params *) param;
-//     const uint led_pin = lpr->pin;
-//     const uint delay = pdMS_TO_TICKS(lpr->delay);
-//     gpio_init(led_pin);
-//     gpio_set_dir(led_pin, GPIO_OUT);
-//     while (true) {
-//         gpio_put(led_pin, true);
-//         vTaskDelay(delay);
-//         gpio_put(led_pin, false);
-//         vTaskDelay(delay);
-//     }
-// }
 
 void gpio_task(void *param) {
     (void) param;
@@ -119,7 +105,7 @@ int main()
     printf("\nBoot\n");
 
     data_queue = xQueueCreate(1, sizeof(all_data));
-    command_queue = xQueueCreate(1, sizeof(float));
+    user_queue = xQueueCreate(1, sizeof(float));
 
 
 
@@ -135,8 +121,8 @@ int main()
     xTaskCreate(user_input_task, "User input ", 512, (void *) nullptr,2 ,nullptr );
 #endif
 #if 1
-    xTaskCreate(i2c_task, "i2c test", 512,  (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
+    // xTaskCreate(i2c_task, "i2c test", 512,  (void *) nullptr,
+    //             tskIDLE_PRIORITY + 1, nullptr);
 #endif
 #if 0
 
@@ -149,8 +135,6 @@ int main()
 #include <cstdio>
 #include "ModbusClient.h"
 #include "ModbusRegister.h"
-#include "Gmp252.h"
-#include "hmp60.h"
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
 // datasheet for information on which other pins can be used.
@@ -172,23 +156,24 @@ int main()
 void modbus_task(void *param) {
     (void)param;
     Manager modbus_manager;
+    static float user_set_level = 1000; // needs eeprom read
+
+
     for(;;) {
         float new_user_level;
-        all_data d = modbus_manager.read_data();
 
-
-        if (xQueueReceive(command_queue, &new_user_level, 0)==pdTRUE){
-            printf("new_user_level: %f\n", new_user_level);
-            d.user_set_level = new_user_level;
+        if (xQueueReceive(user_queue, &new_user_level, 0)==pdTRUE){
+            user_set_level = new_user_level;
         }
+        all_data d = modbus_manager.read_data();
+        d.user_set_level = user_set_level; // update the data for sending
 
 
         if (d.user_set_level > d.co2_data) {
             printf("CO2 below user set limit opening the valve\n");
-           d = modbus_manager.valve_open();
-        } else {
-        //     printf("[DATA] CO2=%.1f ppm | RH=%.1f %% | T=%.1f C | user_set=%.1f ppm | t=%lu\n",
-        //                       d.co2_data, d.hmp60_rh, d.hmp60_t, d.user_set_level, d.timestamp);
+           d = modbus_manager.valve_open(user_set_level);
+        } if (d.co2_data> d.user_set_level){
+        // fan conrtol logic
          }
 
         xQueueSend(data_queue, &d, portMAX_DELAY);
@@ -219,7 +204,7 @@ void display_task(void *param)
             display.text(line,0,10);
             snprintf(line,sizeof(line),"T: %.1f C",d.hmp60_t);
             display.text(line,0,20);
-            sniprintf(line, sizeof(line), "user : %.1f ppm", d.user_set_level);
+            snprintf(line,sizeof(line), "user: %.1f ppm",d.user_set_level);
             display.text(line, 0, 30);
             display.show();
         }
@@ -296,7 +281,7 @@ void user_input_task(void *params) {
                         if (new_limit > CO2_MAX)  new_limit = CO2_MAX;
 
                         // send to queue (float)
-                        if (xQueueOverwrite(command_queue, &new_limit) == pdPASS) {
+                        if (xQueueSend(user_queue, &new_limit, portMAX_DELAY) == pdPASS) {
                             printf("\n[OK] new CO2 limit: %.1f ppm\n", new_limit);
                         } else {
                             printf("\n[ERR] queue send failed\n");
