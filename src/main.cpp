@@ -4,18 +4,19 @@
 #include "task.h"
 #include "semphr.h"
 #include "hardware/gpio.h"
-#include "PicoI2C.h"
+#include "blinker.h"
 #include "PicoOsUart.h"
 #include "ssd1306.h"
 #include "hardware/timer.h"
-#include "blinker.h"
-#include <cstdio>
-#include "ModbusClient.h"
-#include "ModbusRegister.h"
-#include "sdp610.h"
+#include "Manager.h"
 #include "eeprom.h"
+#include "ssd1306os.h"
+#include "sdp610.h"
 
+#define BAUD_RATE 9600
+#define STOP_BITS 2 // for real system (pico simualtor also requires 2 stop bits)
 
+#define USE_MODBUS
 
 extern "C" {
 uint32_t read_runtime_ctr(void) {
@@ -23,8 +24,9 @@ uint32_t read_runtime_ctr(void) {
 }
 }
 
-
 SemaphoreHandle_t gpio_sem;
+QueueHandle_t data_queue;
+QueueHandle_t user_queue;
 
 // void gpio_callback(uint gpio, uint32_t events) {
 //     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -32,12 +34,34 @@ SemaphoreHandle_t gpio_sem;
 //     xSemaphoreGiveFromISR(gpio_sem, &xHigherPriorityTaskWoken);
 //     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 // }
-//
-// struct led_params{
-//     uint pin;
-//     uint delay;
-// };
-//
+
+void display_task(void *param) {
+    auto i2cbus{std::make_shared<PicoI2C>(1, 400000)};
+    ssd1306os display(i2cbus);
+    EEPROM_24C256 eeprom(i2c0);
+
+    char line[64];
+
+    while (true) {
+        display.fill(0);
+
+        uint16_t co2_setpoint;
+        if (eeprom.read_co2_setpoint(co2_setpoint)) {
+            snprintf(line, sizeof(line), "CO2 Set: %u ppm", co2_setpoint);
+        } else {
+            snprintf(line, sizeof(line), "CO2 Set: Error");
+        }
+        display.text(line, 0, 0);
+
+        snprintf(line, sizeof(line), "EEPROM Data Only");
+        display.text(line, 0, 20);
+
+        display.show();
+
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Update every second
+    }
+}
+
 // void blink_task(void *param)
 // {
 //     auto lpr = (led_params *) param;
@@ -52,7 +76,7 @@ SemaphoreHandle_t gpio_sem;
 //         vTaskDelay(delay);
 //     }
 // }
-//
+
 // void gpio_task(void *param) {
 //     (void) param;
 //     const uint button_pin = 9;
@@ -74,7 +98,7 @@ SemaphoreHandle_t gpio_sem;
 //         }
 //     }
 // }
-//
+
 // void serial_task(void *param)
 // {
 //     PicoOsUart u(0, 0, 1, 115200);
@@ -104,10 +128,11 @@ SemaphoreHandle_t gpio_sem;
 //         }
 //     }
 // }
-//
+
 // void modbus_task(void *param);
-// void display_task(void *param);
+//void display_task(void *param);
 // void i2c_task(void *param);
+// void user_input_task(void *param);
 // extern "C" {
 //     void tls_test(void);
 // }
@@ -119,139 +144,147 @@ SemaphoreHandle_t gpio_sem;
 //     }
 // }
 
-int main()
-{
-    //static led_params lp1 = { .pin = 20, .delay = 300 };
+void user_input_task(void *params) {
+    char buffer[128];
+    int idx = 0;
+
+    const float CO2_MIN = 100.0f;
+
+    const float CO2_MAX = 2000.0f; // in document
+    printf("Enter the new CO2 limit (ppm, e.g. 120.4): ");
+    fflush(stdout);
+
+
+    for (;;) {
+        int c = getchar_timeout_us(0);
+        if (c != PICO_ERROR_TIMEOUT) {
+            char ch = (char) c;
+
+            if (ch == '\r' || ch == '\n') {
+                if (idx > 0) {
+                    //space or enter has been pressed then add
+                    buffer[idx] = '\0';
+
+                    float new_limit = 0.0f;
+                    // scan the buffer for float
+                    if (sscanf(buffer, "%f", &new_limit) == 1) {
+                        // checking the limits
+                        if (new_limit < CO2_MIN) new_limit = CO2_MIN;
+                        if (new_limit > CO2_MAX) new_limit = CO2_MAX;
+
+                        // send to queue (float)
+                        if (xQueueSend(user_queue, &new_limit, portMAX_DELAY) == pdPASS) {
+                            printf("\n[OK] new CO2 limit: %.1f ppm\n", new_limit);
+                        } else {
+                            printf("\n[ERR] queue send failed\n");
+                        }
+                    } else {
+                        //this if there is no float in the buffer
+                        printf("\nInvalid input. Try again.\n");
+                    }
+
+                    //start over
+                    idx = 0;
+                }
+                printf("\nEnter the new CO2 limit (ppm, e.g. 120.4): ");
+                fflush(stdout);
+            } else if (isprint((unsigned char) ch)) {
+                if (idx < (int) sizeof(buffer) - 1) {
+                    buffer[idx++] = ch;
+                    fflush(stdout);
+                }
+            }
+        }
+
+        // small delay
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+int main() {
     stdio_init_all();
     printf("\nBoot\n");
 
-    //auto eeprom_i2c = std::make_shared<PicoI2C>(0, 100000); // I2C0 using SDA=GP16, SCL=GP17
-    auto i2c_bus = std::make_shared<PicoI2C>(1, 100000); // I2C1 SDA=14, SCL=15
-    static SDP610 sensor(i2c_bus);
+    data_queue = xQueueCreate(1, sizeof(all_data));
+    user_queue = xQueueCreate(1, sizeof(float));
 
     gpio_sem = xSemaphoreCreateBinary();
-    //xTaskCreate(blink_task, "LED_1", 256, (void *) &lp1, tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(gpio_task, "BUTTON", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(serial_task, "UART0", 256, (void *) nullptr,
+
+    //auto i2c_bus = std::make_shared<PicoI2C>(1, 100000); // I2C1 SDA=14, SCL=15
+    //static SDP610 sensor(i2c_bus);
+
+#if 1
+    //xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
     //            tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
-    //            tskIDLE_PRIORITY + 1, nullptr);
-    xTaskCreate(SDP610::sdp610_task, "SDP610", 512,
-        (void*)&sensor, tskIDLE_PRIORITY + 1, nullptr);
-
-    //printf("\n=== FreeRTOS EEPROM Test ===\n");
-
-    // Create EEPROM test task
-    // BaseType_t result = xTaskCreate(
-    //     eeprom_test_task,
-    //     "EEPROM_Test",
-    //     1024,  // Stack size
-    //     nullptr,
-    //     tskIDLE_PRIORITY + 1,
-    //     nullptr
-    // );
-    //
-    // if(result == pdPASS) {
-    //     printf("EEPROM task created successfully\n");
-    // } else {
-    //     printf("FAILED to create EEPROM task\n");
-    // }
-
-#if 0
-    xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-
-
     xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
                 tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(user_input_task, "User input ", 512, (void *) nullptr,
+                2, nullptr);
+    //xTaskCreate(SDP610::sdp610_task, "SDP610", 512,
+    //    (void*)&sensor, tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(
+        eepromTask,
+        "EEPROM Task",
+        1024,
+        nullptr,
+        tskIDLE_PRIORITY + 1,
+        nullptr
+    );
+
+#endif
+#if 1
+    //xTaskCreate(i2c_task, "i2c test", 512,  (void *) nullptr,
+    //           tskIDLE_PRIORITY + 1, nullptr);
 #endif
 #if 0
-    xTaskCreate(i2c_task, "i2c test", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-#endif
-#if 0
-    xTaskCreate(tls_task, "tls test", 6000, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
+
 #endif
     vTaskStartScheduler();
 
-    while(true){};
+    while (true) {
+    };
 }
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
 // datasheet for information on which other pins can be used.
-// #if 0
-// #define UART_NR 0
-// #define UART_TX_PIN 0
-// #define UART_RX_PIN 1
-// #else
-// #define UART_NR 1
-// #define UART_TX_PIN 4
-// #define UART_RX_PIN 5
-// #endif
-//
-// #define BAUD_RATE 9600
-// #define STOP_BITS 2 // for real system (pico simualtor also requires 2 stop bits)
-//
-// #define USE_MODBUS
-//
+#if 0
+    #define UART_NR 0
+    #define UART_TX_PIN 0
+    #define UART_RX_PIN 1
+#else
+#define UART_NR 1
+#define UART_TX_PIN 4
+#define UART_RX_PIN 5
+#endif
+
 // void modbus_task(void *param) {
+//     (void)param;
+//     Manager modbus_manager;
+//     for(;;) {
+//         float new_user_level;
+//         all_data d = modbus_manager.read_data();
 //
-//     const uint led_pin = 22;
-//     const uint button = 9;
 //
-//     // Initialize LED pin
-//     gpio_init(led_pin);
-//     gpio_set_dir(led_pin, GPIO_OUT);
+//         if (xQueueReceive(command_queue, &new_user_level, 0)==pdTRUE){
+//             printf("new_user_level: %f\n", new_user_level);
+//             d.user_set_level = new_user_level;
+//         }
 //
-//     gpio_init(button);
-//     gpio_set_dir(button, GPIO_IN);
-//     gpio_pull_up(button);
 //
-//     // Initialize chosen serial port
-//     //stdio_init_all();
+//         if (d.user_set_level > d.co2_data) {
+//             printf("CO2 below user set limit opening the valve\n");
+//            d = modbus_manager.valve_open();
+//         } else {
+//         //     printf("[DATA] CO2=%.1f ppm | RH=%.1f %% | T=%.1f C | user_set=%.1f ppm | t=%lu\n",
+//         //                       d.co2_data, d.hmp60_rh, d.hmp60_t, d.user_set_level, d.timestamp);
+//          }
 //
-//     //printf("\nBoot\n");
-//
-// #ifdef USE_MODBUS
-//     auto uart{std::make_shared<PicoOsUart>(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE, STOP_BITS)};
-//     auto rtu_client{std::make_shared<ModbusClient>(uart)};
-//     ModbusRegister rh(rtu_client, 241, 256);
-//     ModbusRegister t(rtu_client, 241, 257);
-//     ModbusRegister produal(rtu_client, 1, 0);
-//     produal.write(100);
-//     vTaskDelay((100));
-//     produal.write(100);
-// #endif
-//
-//     while (true) {
-// #ifdef USE_MODBUS
-//         gpio_put(led_pin, !gpio_get(led_pin)); // toggle  led
-//         printf("RH=%5.1f%%\n", rh.read() / 10.0);
-//         vTaskDelay(5);
-//         printf("T =%5.1f%%\n", t.read() / 10.0);
-//         vTaskDelay(3000);
-// #endif
+//         xQueueSend(data_queue, &d, portMAX_DELAY);
+//         vTaskDelay(pdMS_TO_TICKS(2000));
 //     }
-//
-//
 // }
-//
-// #include "ssd1306os.h"
-// void display_task(void *param)
-// {
-//     auto i2cbus{std::make_shared<PicoI2C>(1, 400000)};
-//     ssd1306os display(i2cbus);
-//     display.fill(0);
-//     display.text("Boot", 0, 0);
-//     display.text("Sampo on homo", 0,25);
-//     display.show();
-//     while(true) {
-//         vTaskDelay(100);
-//     }
-//
-// }
-//
+
+
 // void i2c_task(void *param) {
 //     auto i2cbus{std::make_shared<PicoI2C>(0, 100000)};
 //
