@@ -33,6 +33,8 @@ add_executable(${ProjectName}
         eeprom.cpp
         eeprom.h
         Manager.h
+        fan.h
+        rotary.h
 )
 
 target_include_directories(${ProjectName} PRIVATE
