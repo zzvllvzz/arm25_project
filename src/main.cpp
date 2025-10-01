@@ -126,8 +126,8 @@ int main()
     printf("\nBoot\n");
 
     //auto eeprom_i2c = std::make_shared<PicoI2C>(0, 100000); // I2C0 using SDA=GP16, SCL=GP17
-    //auto i2c_bus = std::make_shared<PicoI2C>(1, 100000); // I2C1 SDA=14, SCL=15
-    //static SDP610 sensor(i2c_bus);
+    auto i2c_bus = std::make_shared<PicoI2C>(1, 100000); // I2C1 SDA=14, SCL=15
+    static SDP610 sensor(i2c_bus);
 
     gpio_sem = xSemaphoreCreateBinary();
     //xTaskCreate(blink_task, "LED_1", 256, (void *) &lp1, tskIDLE_PRIORITY + 1, nullptr);
@@ -136,26 +136,26 @@ int main()
     //            tskIDLE_PRIORITY + 1, nullptr);
     //xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
     //            tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(SDP610::sdp610_task, "SDP610", 512,
-    //    (void*)&sensor, tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(SDP610::sdp610_task, "SDP610", 512,
+        (void*)&sensor, tskIDLE_PRIORITY + 1, nullptr);
 
-    printf("\n=== FreeRTOS EEPROM Test ===\n");
+    //printf("\n=== FreeRTOS EEPROM Test ===\n");
 
     // Create EEPROM test task
-    BaseType_t result = xTaskCreate(
-        eeprom_test_task,
-        "EEPROM_Test",
-        1024,  // Stack size
-        nullptr,
-        tskIDLE_PRIORITY + 1,
-        nullptr
-    );
-
-    if(result == pdPASS) {
-        printf("EEPROM task created successfully\n");
-    } else {
-        printf("FAILED to create EEPROM task\n");
-    }
+    // BaseType_t result = xTaskCreate(
+    //     eeprom_test_task,
+    //     "EEPROM_Test",
+    //     1024,  // Stack size
+    //     nullptr,
+    //     tskIDLE_PRIORITY + 1,
+    //     nullptr
+    // );
+    //
+    // if(result == pdPASS) {
+    //     printf("EEPROM task created successfully\n");
+    // } else {
+    //     printf("FAILED to create EEPROM task\n");
+    // }
 
 #if 0
     xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
