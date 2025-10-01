@@ -3,34 +3,34 @@
 
 #include "queue.h"
 
-extern QueueHandle_t command_queue;
+extern QueueHandle_t user_queue;
 
 EEPROM_24C256::EEPROM_24C256(i2c_inst_t *i2c_instance, uint8_t addr)
     : i2c(i2c_instance), device_addr(addr) {
 }
 
-bool EEPROM_24C256::test_communication() {
-    uint8_t addr_buf[2] = {0x00, 0x00};
-    int result = i2c_write_blocking(i2c, device_addr, addr_buf, 2, true);
-    return (result == 2);
-}
-
-void EEPROM_24C256::scan_bus() {
-    printf("Scanning I2C bus...\n");
-    for(uint8_t addr = 1; addr < 127; addr++) {
-        if(addr % 16 == 0) printf("\n");
-
-        uint8_t dummy[1] = {0};
-        int result = i2c_write_blocking(i2c, addr, dummy, 1, true);
-
-        if(result == 1) {
-            printf(" [0x%02X] ", addr);
-        } else {
-            printf(" . ");
-        }
-    }
-    printf("\n\n");
-}
+// bool EEPROM_24C256::test_communication() {
+//     uint8_t addr_buf[2] = {0x00, 0x00};
+//     int result = i2c_write_blocking(i2c, device_addr, addr_buf, 2, true);
+//     return (result == 2);
+// }
+//
+// void EEPROM_24C256::scan_bus() {
+//     printf("Scanning I2C bus...\n");
+//     for(uint8_t addr = 1; addr < 127; addr++) {
+//         if(addr % 16 == 0) printf("\n");
+//
+//         uint8_t dummy[1] = {0};
+//         int result = i2c_write_blocking(i2c, addr, dummy, 1, true);
+//
+//         if(result == 1) {
+//             printf(" [0x%02X] ", addr);
+//         } else {
+//             printf(" . ");
+//         }
+//     }
+//     printf("\n\n");
+// }
 
 bool EEPROM_24C256::write_byte(uint16_t mem_addr, uint8_t data) {
     uint8_t buf[3];
@@ -130,7 +130,7 @@ bool EEPROM_24C256::read_co2_setpoint(uint16_t &ppm) {
     return false;
 }
 
-void eeprom_test_task(void *param) {
+void eepromTask(void *param) {
     (void)param;
 
     printf("EEPROM FreeRTOS Task Started!\n");
@@ -145,12 +145,12 @@ void eeprom_test_task(void *param) {
     EEPROM_24C256 eeprom(i2c0);
 
     // Test communication
-    if(!eeprom.test_communication()) {
-        printf("EEPROM communication FAILED\n");
-        eeprom.scan_bus();
-        vTaskDelete(NULL);
-    }
-    printf("EEPROM communication OK\n");
+    // if(!eeprom.test_communication()) {
+    //     printf("EEPROM communication FAILED\n");
+    //     eeprom.scan_bus();
+    //     vTaskDelete(NULL);
+    // }
+    // printf("EEPROM communication OK\n");
 
     // Read existing setpoint on startup
     uint16_t current_ppm;
@@ -158,7 +158,7 @@ void eeprom_test_task(void *param) {
         printf("Stored CO2 setpoint: %u ppm\n", current_ppm);
         // Send to command queue for system use
         float setpoint_float = (float)current_ppm;
-        xQueueOverwrite(command_queue, &setpoint_float);
+        xQueueOverwrite(user_queue, &setpoint_float);
     } else {
         printf("No stored setpoint, initializing with 400 ppm\n");
         eeprom.write_co2_setpoint(400);
@@ -167,7 +167,7 @@ void eeprom_test_task(void *param) {
     // Main loop - store new setpoints from queue
     float new_setpoint;
     while(true) {
-        if(xQueueReceive(command_queue, &new_setpoint, portMAX_DELAY) == pdPASS) {
+        if(xQueueReceive(user_queue, &new_setpoint, portMAX_DELAY) == pdPASS) {
             uint16_t ppm_to_store = (uint16_t)new_setpoint;
 
             printf("EEPROM: Storing %u ppm... ", ppm_to_store);
@@ -176,10 +176,10 @@ void eeprom_test_task(void *param) {
                 printf("Success\n");
 
                 // Optional verification
-                uint16_t verify_ppm;
-                if(eeprom.read_co2_setpoint(verify_ppm) && verify_ppm == ppm_to_store) {
-                    printf("EEPROM: Verified OK\n");
-                }
+                // uint16_t verify_ppm;
+                // if(eeprom.read_co2_setpoint(verify_ppm) && verify_ppm == ppm_to_store) {
+                //     printf("EEPROM: Verified OK\n");
+                // }
             } else {
                 printf("Failed!\n");
             }

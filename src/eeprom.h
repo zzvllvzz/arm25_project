@@ -22,8 +22,8 @@ public:
     uint8_t read_byte(uint16_t mem_addr);
     bool read_data(uint16_t mem_addr, uint8_t *data, uint16_t len);
 
-    bool test_communication();
-    void scan_bus();
+    // bool test_communication();
+    // void scan_bus();
 
     // CO2 setpoint functions
     bool write_co2_setpoint(uint16_t ppm);
@@ -31,6 +31,6 @@ public:
 };
 
 // FreeRTOS task
-void eeprom_test_task(void *param);
+void eepromTask(void *param);
 
 #endif
