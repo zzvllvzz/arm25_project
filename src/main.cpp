@@ -34,23 +34,61 @@ QueueHandle_t user_queue;
 //     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 // }
 
+void modbus_task(void *param) {
+    (void)param;
+    Manager modbus_manager;
+    for(;;) {
+        float new_user_level;
+        all_data d = modbus_manager.read_data();
+
+
+        if (xQueueReceive(user_queue, &new_user_level, 0)==pdTRUE){
+            printf("new_user_level: %f\n", new_user_level);
+            d.user_set_level = new_user_level;
+        }
+
+
+        if (d.user_set_level > d.co2_data) {
+            printf("CO2 below user set limit opening the valve\n");
+           d = modbus_manager.valve_open();
+        } else {
+        //     printf("[DATA] CO2=%.1f ppm | RH=%.1f %% | T=%.1f C | user_set=%.1f ppm | t=%lu\n",
+        //                       d.co2_data, d.hmp60_rh, d.hmp60_t, d.user_set_level, d.timestamp);
+         }
+
+        xQueueSend(data_queue, &d, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 void display_task(void *param) {
     auto i2cbus{std::make_shared<PicoI2C>(1, 400000)};
     ssd1306os display(i2cbus);
     EEPROM_24C256 eeprom(i2c0);
 
+    all_data d;
     char line[64];
 
     while (true) {
         display.fill(0);
 
-        uint16_t co2_setpoint;
-        if (eeprom.read_co2_setpoint(co2_setpoint)) {
-            snprintf(line, sizeof(line), "CO2 Set: %u ppm", co2_setpoint);
-        } else {
-            snprintf(line, sizeof(line), "CO2 Set: Error");
+        if (xQueueReceive(data_queue,&d,portMAX_DELAY)==pdTRUE) {
+            snprintf(line,sizeof(line),"CO2:%.1f ppm",d.co2_data);
+            display.text(line,0,10);
+            snprintf(line,sizeof(line),"RH: %.1f %%",d.hmp60_rh);
+            display.text(line,0,20);
+            snprintf(line,sizeof(line),"T: %.1f C",d.hmp60_t);
+            display.text(line,0,30);
+
+            uint16_t co2_setpoint;
+            if (eeprom.read_co2_setpoint(co2_setpoint)) {
+                snprintf(line, sizeof(line), "CO2 Set: %u ppm", co2_setpoint);
+            } else {
+                snprintf(line, sizeof(line), "CO2 Set: Error");
+            }
+            display.text(line, 0, 40);
+            display.show();
         }
-        display.text(line, 0, 0);
 
         display.show();
 
@@ -204,11 +242,9 @@ int main() {
     data_queue = xQueueCreate(1, sizeof(all_data));
     user_queue = xQueueCreate(1, sizeof(float));
 
-    gpio_sem = xSemaphoreCreateBinary();
-
 #if 1
-    //xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
-    //            tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
+                tskIDLE_PRIORITY + 1, nullptr);
     xTaskCreate(
         display_task,
         "SSD1306",
@@ -259,34 +295,6 @@ int main() {
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
 #endif
-
-// void modbus_task(void *param) {
-//     (void)param;
-//     Manager modbus_manager;
-//     for(;;) {
-//         float new_user_level;
-//         all_data d = modbus_manager.read_data();
-//
-//
-//         if (xQueueReceive(command_queue, &new_user_level, 0)==pdTRUE){
-//             printf("new_user_level: %f\n", new_user_level);
-//             d.user_set_level = new_user_level;
-//         }
-//
-//
-//         if (d.user_set_level > d.co2_data) {
-//             printf("CO2 below user set limit opening the valve\n");
-//            d = modbus_manager.valve_open();
-//         } else {
-//         //     printf("[DATA] CO2=%.1f ppm | RH=%.1f %% | T=%.1f C | user_set=%.1f ppm | t=%lu\n",
-//         //                       d.co2_data, d.hmp60_rh, d.hmp60_t, d.user_set_level, d.timestamp);
-//          }
-//
-//         xQueueSend(data_queue, &d, portMAX_DELAY);
-//         vTaskDelay(pdMS_TO_TICKS(2000));
-//     }
-// }
-
 
 // void i2c_task(void *param) {
 //     auto i2cbus{std::make_shared<PicoI2C>(0, 100000)};
