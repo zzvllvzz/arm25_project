@@ -6,6 +6,7 @@
 #include "Gmp252.h"
 #include "hmp60.h"
 #include "PicoOsUart.h"
+#include "Fan.h"
 #ifndef RP2040_FREERTOS_IRQ_MANGER_H
 #define RP2040_FREERTOS_IRQ_MANGER_H
 #define valve_pin 27
@@ -17,9 +18,10 @@ struct all_data {
    float co2_data;
     float hmp60_rh;
     float hmp60_t;
-    float user_set_level;
     bool status;
     uint32_t timestamp;
+    bool fan_running;
+    int last_pulses;
 
 };
 
@@ -33,7 +35,8 @@ public:
     : uart   (std::make_shared<PicoOsUart>(/*UART_NR*/1, /*TX*/4, /*RX*/5, /*BAUD*/9600, /*STOP*/2)),
       client (std::make_shared<ModbusClient>(uart)),
       co2    (client, 240),   // Gmp252_co2(std::shared_ptr<ModbusClient>&, slave)
-      hmp    (client, 241)    // Hmp60sensor(const std::shared_ptr<ModbusClient>&, slave)
+      hmp    (client, 241),// Hmp60sensor(const std::shared_ptr<ModbusClient>&, slave)
+        fan (client, 0)
     {
         gpio_init(valve_pin);
         gpio_set_dir(valve_pin, GPIO_OUT); // valve init
@@ -44,7 +47,8 @@ public:
       // prototype read funtion
       all_data read_data() {
             auto c  = co2.read_co2(); // {co2_data, status, ...}
-            auto ht = hmp.read();     // {rh, t, ok}
+            auto ht = hmp.read();// {rh, t, ok}
+            auto pulse = fan.poll_running();
 
 
             //updating the data
@@ -52,52 +56,39 @@ public:
             data.co2_data  = c.co2_data;
             data.hmp60_rh  = ht.rh;
             data.hmp60_t   = ht.t;
-            data.status    = (c.status && ht.ok);
+            data.status    = (c.status && ht.ok) ;
+            data.last_pulses = pulse.last_pulses;
             data.timestamp = xTaskGetTickCount();
 
             return data;
 
-
-
     }
 
 
 
-    void fan_control(float fan_speed) {
+    void fan_on(float fan_speed) {
 
+        fan.set_percent(fan_speed);
+    }
+    void fan_off() {
+        fan.set_percent(0);
     }
 
 
     // prototype needs work
-    all_data valve_open(float desired_ppm, int open_ms = 1900, int set_ms = 100) {
-        all_data data = read_data();
-        data.user_set_level = desired_ppm;
-
-            // if sensor read failed, break early
-            if (!data.status) {
-                printf("valve_open: sensor read failed\n");
-               return data;
-            }
-
-            if (data.co2_data >= data.user_set_level) {
-                printf("valve_open: target reached (%.1f ppm)\n", data.co2_data);
-
-                return data;
-            }
-
+    void valve_open(  int open_ms = 2000, int set_ms = 5000){
             // open the valve and keep it open while we wait
             gpio_put(valve_pin, 1);
             vTaskDelay(pdMS_TO_TICKS(open_ms));
             //let the co2 levels even out
             //close the valve
             gpio_put(valve_pin, 0);
+        //let the levels settle
             vTaskDelay(pdMS_TO_TICKS(set_ms));
-            //close the valve
-            data = read_data();
 
         // make sure valve is closed at the end
         gpio_put(valve_pin, 0);
-        return data;
+        return;
     }
 
 
@@ -109,7 +100,8 @@ private:
     std::shared_ptr<PicoOsUart>   uart;
     std::shared_ptr<ModbusClient> client;
     Gmp252_co2 co2;   // needs a client in the constructor
-    Hmp60sensor hmp;   //needs a client in the constructor
+    Hmp60sensor hmp;//needs a client in the constructor
+    Fan fan;
 
 
 };

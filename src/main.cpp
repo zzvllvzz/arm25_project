@@ -9,6 +9,7 @@
 #include "hardware/timer.h"
 #include "Manager.h"
 #include "eeprom.h"
+#include "rotary.h"
 
 extern "C" {
 uint32_t read_runtime_ctr(void) {
@@ -21,73 +22,18 @@ uint32_t read_runtime_ctr(void) {
 SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
 QueueHandle_t user_queue;
-
-void gpio_callback(uint gpio, uint32_t events) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // signal task that a button was pressed
-    xSemaphoreGiveFromISR(gpio_sem, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-}
+QueueHandle_t rotary_queue;
 
 
+SemaphoreHandle_t user_level_mutex;   // suojaus
+float user_set_level = 200;       // ppm
 
-
-void gpio_task(void *param) {
-    (void) param;
-    const uint button_pin = 9;
-    const uint led_pin = 22;
-    const uint delay = pdMS_TO_TICKS(250);
-    gpio_init(led_pin);
-    gpio_set_dir(led_pin, GPIO_OUT);
-    gpio_init(button_pin);
-    gpio_set_dir(button_pin, GPIO_IN);
-    gpio_set_pulls(button_pin, true, false);
-    gpio_set_irq_enabled_with_callback(button_pin, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
-    while(true) {
-        if(xSemaphoreTake(gpio_sem, portMAX_DELAY) == pdTRUE) {
-            //std::cout << "button event\n";
-            gpio_put(led_pin, 1);
-            vTaskDelay(delay);
-            gpio_put(led_pin, 0);
-            vTaskDelay(delay);
-        }
-    }
-}
-
-void serial_task(void *param)
-{
-    PicoOsUart u(0, 0, 1, 115200);
-    Blinker blinky(20);
-    uint8_t buffer[64];
-    std::string line;
-    while (true) {
-        if(int count = u.read(buffer, 63, 30); count > 0) {
-            u.write(buffer, count);
-            buffer[count] = '\0';
-            line += reinterpret_cast<const char *>(buffer);
-            if(line.find_first_of("\n\r") != std::string::npos){
-                u.send("\n");
-                std::istringstream input(line);
-                std::string cmd;
-                input >> cmd;
-                if(cmd == "delay") {
-                    uint32_t i = 0;
-                    input >> i;
-                    blinky.on(i);
-                }
-                else if (cmd == "off") {
-                    blinky.off();
-                }
-                line.clear();
-            }
-        }
-    }
-}
 
 void modbus_task(void *param);
 void display_task(void *param);
 void i2c_task(void *param);
 void user_input_task(void *param);
+void rotary_task(void *param);
 extern "C" {
     void tls_test(void);
 }
@@ -103,9 +49,12 @@ int main()
 {
     stdio_init_all();
     printf("\nBoot\n");
+    setup_rotary(); // rotary pins
 
     data_queue = xQueueCreate(1, sizeof(all_data));
     user_queue = xQueueCreate(1, sizeof(float));
+    rotary_queue = xQueueCreate(1, sizeof(float));
+    user_level_mutex = xSemaphoreCreateMutex();
 
 
 
@@ -113,12 +62,14 @@ int main()
 
 #if 1
     xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
+    2, nullptr);
 
 
     xTaskCreate(display_task, "SSD1306", 512,  (void *) nullptr,
                 tskIDLE_PRIORITY + 1, nullptr);
-    xTaskCreate(user_input_task, "User input ", 512, (void *) nullptr,2 ,nullptr );
+    xTaskCreate(rotary_task, "rotary ", 512,  (void *) nullptr,
+                2, nullptr);
+
 #endif
 #if 1
     // xTaskCreate(i2c_task, "i2c test", 512,  (void *) nullptr,
@@ -153,31 +104,53 @@ int main()
 
 #define USE_MODBUS
 
+void rotary_task(void *param) {
+
+    // you can set these
+    constexpr float STEP = 10;
+    constexpr float MINP = 100.0f;
+    constexpr float MAXP = 1500.0f;
+
+    event_t ev;
+    for (;;) {
+        if (xQueueReceive(rotary_queue, &ev, portMAX_DELAY) == pdTRUE) {
+            if (xSemaphoreTake(user_level_mutex, portMAX_DELAY) == pdTRUE) {
+                switch (ev.type) {
+                    case EVENT_ENCODER_CW:
+                        user_set_level += STEP;
+                        if (user_set_level > MAXP) user_set_level = MAXP;
+                        break;
+
+                    case EVENT_ENCODER_CCW:
+                        user_set_level -= STEP;
+                        if (user_set_level < MINP) user_set_level = MINP;
+                        break;
+
+                }
+                xSemaphoreGive(user_level_mutex);
+            }
+        }
+    }
+}
+
 void modbus_task(void *param) {
     (void)param;
     Manager modbus_manager;
-    static float user_set_level = 1000; // needs eeprom read
-
 
     for(;;) {
-        float new_user_level;
-
-        if (xQueueReceive(user_queue, &new_user_level, 0)==pdTRUE){
-            user_set_level = new_user_level;
-        }
         all_data d = modbus_manager.read_data();
-        d.user_set_level = user_set_level; // update the data for sending
-
-
-        if (d.user_set_level > d.co2_data) {
+        if (user_set_level > d.co2_data) {
             printf("CO2 below user set limit opening the valve\n");
-           d = modbus_manager.valve_open(user_set_level);
-        } if (d.co2_data> d.user_set_level){
-        // fan conrtol logic
-         }
+            printf("user set limit: %.f\n");
+
+           // d = modbus_manager.valve_open(user_set_level);
+        } if (d.co2_data> user_set_level) {
+            printf("CO2 above user set limit opening the valve\n");
+            printf("user set limit: %.f\n");
+        }
 
         xQueueSend(data_queue, &d, portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
@@ -190,28 +163,45 @@ void display_task(void *param)
 {
     auto i2cbus{std::make_shared<PicoI2C>(1, 400000)};
     ssd1306os display(i2cbus);
-    all_data d;
+    all_data d{};
+    all_data last_data{};  // save the last data
     char line[64];
-    // display.fill(0);
-    // display.text("Boot", 0, 0);
-    // display.show();
-    while(true) {
-        if (xQueueReceive(data_queue,&d,portMAX_DELAY)==pdTRUE) {
-            display.fill(0);
-            snprintf(line,sizeof(line),"CO2:%.1f ppm",d.co2_data);
-            display.text(line,0,0);
-            snprintf(line,sizeof(line),"RH: %.1f %%",d.hmp60_rh);
-            display.text(line,0,10);
-            snprintf(line,sizeof(line),"T: %.1f C",d.hmp60_t);
-            display.text(line,0,20);
-            snprintf(line,sizeof(line), "user: %.1f ppm",d.user_set_level);
-            display.text(line, 0, 30);
-            display.show();
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
 
+    while (true) {
+        // check for new data if not print old data
+        if (xQueueReceive(data_queue, &d, pdMS_TO_TICKS(50)) == pdTRUE) {
+            last_data = d; // update last data
+        }
+
+        display.fill(0);
+
+        //
+        snprintf(line,sizeof(line),"CO2:%.1f ppm", last_data.co2_data);
+        display.text(line,0,0);
+
+        snprintf(line,sizeof(line),"RH: %.1f %%", last_data.hmp60_rh);
+        display.text(line,0,10);
+
+        snprintf(line,sizeof(line),"T: %.1f C", last_data.hmp60_t);
+        display.text(line,0,20);
+
+        // set level protected with semaphore
+        float level;
+        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            level = user_set_level;
+            xSemaphoreGive(user_level_mutex);
+        } else {
+            level = 0; // fallback
+        }
+        snprintf(line,sizeof(line),"Set: %.1f ppm", level);
+        display.text(line,0,30);
+
+        display.show();
+
+        vTaskDelay(pdMS_TO_TICKS(200)); // update the screen 5 times a sec
+    }
 }
+
 
 
 void i2c_task(void *param) {
@@ -308,7 +298,4 @@ void user_input_task(void *params) {
         // small delay
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-}
-
-
-
+};

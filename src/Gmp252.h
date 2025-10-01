@@ -40,9 +40,6 @@ public:
 private:
     ModbusRegister co2_req;
 
-    int co2_max = 2000; // set in the project documentation
-
-
 };
 
 #endif GMP252_H

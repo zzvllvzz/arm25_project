@@ -36,6 +36,8 @@ add_executable(${ProjectName}
         display/ssd1306os.cpp
         Gmp252.h
         Manager.h
+        fan.h
+        rotary.h
 )
 
 target_include_directories(${ProjectName} PRIVATE
