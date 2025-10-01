@@ -11,7 +11,6 @@
 #include "Manager.h"
 #include "eeprom.h"
 #include "ssd1306os.h"
-#include "sdp610.h"
 
 #define BAUD_RATE 9600
 #define STOP_BITS 2 // for real system (pico simualtor also requires 2 stop bits)
@@ -52,9 +51,6 @@ void display_task(void *param) {
             snprintf(line, sizeof(line), "CO2 Set: Error");
         }
         display.text(line, 0, 0);
-
-        snprintf(line, sizeof(line), "EEPROM Data Only");
-        display.text(line, 0, 20);
 
         display.show();
 
@@ -210,18 +206,25 @@ int main() {
 
     gpio_sem = xSemaphoreCreateBinary();
 
-    //auto i2c_bus = std::make_shared<PicoI2C>(1, 100000); // I2C1 SDA=14, SCL=15
-    //static SDP610 sensor(i2c_bus);
-
 #if 1
     //xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
     //            tskIDLE_PRIORITY + 1, nullptr);
-    xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-    xTaskCreate(user_input_task, "User input ", 512, (void *) nullptr,
-                2, nullptr);
-    //xTaskCreate(SDP610::sdp610_task, "SDP610", 512,
-    //    (void*)&sensor, tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(
+        display_task,
+        "SSD1306",
+        512,
+        (void *) nullptr,
+        tskIDLE_PRIORITY + 1,
+        nullptr
+        );
+    xTaskCreate(
+        user_input_task,
+        "User input ",
+        512,
+        (void *) nullptr,
+        2,
+        nullptr
+        );
     xTaskCreate(
         eepromTask,
         "EEPROM Task",

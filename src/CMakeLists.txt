@@ -33,8 +33,6 @@ add_executable(${ProjectName}
         eeprom.cpp
         eeprom.h
         Manager.h
-        sdp610.h
-        sdp610.cpp
 )
 
 target_include_directories(${ProjectName} PRIVATE
