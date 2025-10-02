@@ -16,8 +16,11 @@ uint32_t read_runtime_ctr(void) {
 }
 
 #include "blinker.h"
+#include "fan.h"
 
 SemaphoreHandle_t gpio_sem;
+
+QueueHandle_t queue_fan;
 
 void gpio_callback(uint gpio, uint32_t events) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -67,7 +70,7 @@ void gpio_task(void *param) {
         }
     }
 }
-
+/*
 void serial_task(void *param)
 {
     PicoOsUart u(0, 0, 1, 115200);
@@ -97,7 +100,7 @@ void serial_task(void *param)
         }
     }
 }
-
+*/
 void modbus_task(void *param);
 void display_task(void *param);
 void i2c_task(void *param);
@@ -112,37 +115,9 @@ void tls_task(void *param)
     }
 }
 
-int main()
-{
-    static led_params lp1 = { .pin = 20, .delay = 300 };
-    stdio_init_all();
-    printf("\nBoot\n");
-
-    gpio_sem = xSemaphoreCreateBinary();
-    //xTaskCreate(blink_task, "LED_1", 256, (void *) &lp1, tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(gpio_task, "BUTTON", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
-    //xTaskCreate(serial_task, "UART1", 256, (void *) nullptr,
-    //            tskIDLE_PRIORITY + 1, nullptr);
-#if 0
-    xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
 
 
-    xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-#endif
-#if 1
-    xTaskCreate(i2c_task, "i2c test", 512, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-#endif
-#if 0
-    xTaskCreate(tls_task, "tls test", 6000, (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-#endif
-    vTaskStartScheduler();
 
-    while(true){};
-}
 
 #include <cstdio>
 #include "ModbusClient.h"
@@ -201,6 +176,7 @@ void modbus_task(void *param) {
         vTaskDelay(5);
         printf("T =%5.1f%%\n", t.read() / 10.0);
         vTaskDelay(3000);
+
 #endif
     }
 
@@ -256,4 +232,90 @@ void i2c_task(void *param) {
     }
 
 
+}
+
+
+void calculation_task(void *param) {
+    int value = 0;
+    while (1) {
+        for (int i = 0; i <= 100; i += 10) {
+            value = i;
+            //printf("speed: %d\n", i);
+            xQueueSend(queue_fan, &value, portMAX_DELAY);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+
+        for (int i = 100; i >= 0; i -= 10) {
+            value = i;
+            //printf("speed: %d\n", i);
+            xQueueSend(queue_fan, &value, portMAX_DELAY);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+
+        }
+
+    }
+}
+
+
+
+void fan_task(void *param) {
+    auto modbus = *(std::shared_ptr<ModbusClient> *)param;
+
+    FanControl fan(modbus, 1); // slave ID = 1
+
+    fan.setOnOff(true);
+    fan.setSpeed(0);
+
+    int value = 0;
+    while (true) {
+
+        if (xQueueReceive(queue_fan, &value, portMAX_DELAY) == pdTRUE) {
+
+            printf("%d\n", value);
+            fan.setSpeed(value);
+        }
+    }
+}
+
+
+int main()
+{
+
+    queue_fan = xQueueCreate(10, sizeof(int));
+    static led_params lp1 = { .pin = 20, .delay = 300 };
+    stdio_init_all();
+    printf("\nBoot\n");
+
+
+    auto uart   = std::make_shared<PicoOsUart>(1, 4, 5, 9600, 2);
+    auto modbus = std::make_shared<ModbusClient>(uart);
+
+    auto i2cbus = std::make_shared<PicoI2C>(1, 400000);
+
+    xTaskCreate(fan_task, "fan task",  512, &modbus,  tskIDLE_PRIORITY + 1, nullptr);
+    xTaskCreate(calculation_task, "calculation task",  512, &modbus,  tskIDLE_PRIORITY + 1, nullptr);
+
+    gpio_sem = xSemaphoreCreateBinary();
+    //xTaskCreate(blink_task, "LED_1", 256, (void *) &lp1, tskIDLE_PRIORITY + 1, nullptr);
+    //xTaskCreate(gpio_task, "BUTTON", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
+    //xTaskCreate(serial_task, "UART1", 256, (void *) nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#if 0
+    xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
+                tskIDLE_PRIORITY + 1, nullptr);
+
+
+    xTaskCreate(display_task, "SSD1306", 512, (void *) nullptr,
+                tskIDLE_PRIORITY + 1, nullptr);
+#endif
+#if 1
+    xTaskCreate(i2c_task, "i2c test", 512, (void *) nullptr,
+                tskIDLE_PRIORITY + 1, nullptr);
+#endif
+#if 0
+    xTaskCreate(tls_task, "tls test", 6000, (void *) nullptr,
+                tskIDLE_PRIORITY + 1, nullptr);
+#endif
+    vTaskStartScheduler();
+
+    while(true){};
 }
