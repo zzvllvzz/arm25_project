@@ -28,6 +28,8 @@ struct all_data {
 
 
 
+
+
 class Manager {
 public:
 
