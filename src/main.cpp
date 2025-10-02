@@ -123,32 +123,48 @@ void rotary_task(void *param) {
 void modbus_task(void *param) {
     (void)param;
     Manager m;
-    const float DB = 50.0f;  // deadband ±50 ppm
-     float sp = 1000;
+    const float DB = 30.0f;  // deadband ±50 ppm
+    float sp = 0;
 
 
     for(;;) {
-        all_data d = m.read_data();
-
         if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             sp = user_set_level;
             xSemaphoreGive(user_level_mutex);
         }
+        all_data d = m.read_data();
+        float target_low = sp - DB;   // Alempi tavoite: sp - 40
+        float target_high = sp + DB;
 
-       if (d.co2_data >=  2000) {
-              m.fan_on(100);
+    if (sp == 0) {
+        printf("Could not read user set level" );
+    }else {
+
+
+    }
+       if (d.co2_data >= 2000) {
+           m.fan_on(100);
            m.valve_close();// make sure the valve is closed
-       }else {
-            if (sp + DB <= d.co2_data ) {
-                m.fan_on(100);
-                m.valve_close();
-            }else if (sp - DB >= d.co2_data) {
-                m.fan_off();
-                m.valve_open();
-            }
        }
+       else if (d.co2_data > target_high) {
+           float difference = d.co2_data - sp;
+           if (difference > 50) {
+               m.fan_on(100);  // Dynamic fan speeds based on the co2 difference
+               m.valve_close();
+           } else {
+               m.fan_on(50);
+               m.valve_close();
+           }
+           //wanted state
+       } else if (d.co2_data >= target_low && d.co2_data <= target_high) {
+           m.fan_off(); // make sure evertihng is closed
+           m.valve_close();
 
-        d  = m.read_data(); // update the data
+
+       }else if (d.co2_data < target_low) {
+           m.fan_off();
+           m.valve_open(); // valve_open has built in wait time for letting the co2 set
+       }
 
         xQueueSend(ui_queue, &d, portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(2000));
