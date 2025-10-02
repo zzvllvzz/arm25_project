@@ -1,4 +1,7 @@
 #include <iostream>
+#include <cstdio>
+#include "ModbusClient.h"
+#include "ModbusRegister.h"
 #include <sstream>
 #include "FreeRTOS.h"
 #include "task.h"
@@ -8,6 +11,7 @@
 #include "ssd1306.h"
 #include "hardware/timer.h"
 #include "Manager.h"
+#include "ssd1306os.h"
 #include "eeprom.h"
 #include "rotary.h"
 
@@ -16,8 +20,6 @@ uint32_t read_runtime_ctr(void) {
     return timer_hw->timerawl;
 }
 }
-
-#include "blinker.h"
 
 SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
@@ -83,10 +85,6 @@ int main()
 
     while(true){};
 }
-
-#include <cstdio>
-#include "ModbusClient.h"
-#include "ModbusRegister.h"
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
 // datasheet for information on which other pins can be used.
@@ -158,11 +156,6 @@ void modbus_task(void *param) {
     }
 }
 
-
-
-
-
-#include "ssd1306os.h"
 void display_task(void *param) {
     auto i2cbus{std::make_shared<PicoI2C>(1, 400000)};
     ssd1306os display(i2cbus);

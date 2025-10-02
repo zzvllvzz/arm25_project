@@ -1,6 +1,5 @@
 #include "eeprom.h"
 #include <cstdio>
-
 #include "queue.h"
 
 extern QueueHandle_t user_queue;
