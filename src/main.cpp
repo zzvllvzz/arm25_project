@@ -25,15 +25,18 @@ SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
 QueueHandle_t user_queue;
 QueueHandle_t rotary_queue;
-
+QueueHandle_t ui_queue;
 
 SemaphoreHandle_t user_level_mutex;   // suojaus
+SemaphoreHandle_t modbus_mutex;
+
 float user_set_level = 200;       // ppm
 
 
 void modbus_task(void *param);
 void display_task(void *param);
 void i2c_task(void *param);
+void controller_task(void *param);
 //void user_input_task(void *param);
 void rotary_task(void *param);
 extern "C" {
@@ -56,7 +59,10 @@ int main()
     data_queue = xQueueCreate(1, sizeof(all_data));
     user_queue = xQueueCreate(1, sizeof(float));
     rotary_queue = xQueueCreate(1, sizeof(float));
+    ui_queue = xQueueCreate(1, sizeof(all_data));
+
     user_level_mutex = xSemaphoreCreateMutex();
+    modbus_mutex = xSemaphoreCreateMutex();
 
     gpio_sem = xSemaphoreCreateBinary();
 
@@ -137,22 +143,52 @@ void rotary_task(void *param) {
 
 void modbus_task(void *param) {
     (void)param;
-    Manager modbus_manager;
+    Manager m;
+    const float DB = 30.0f;  // deadband ±50 ppm
+    float sp = 0;
+
 
     for(;;) {
-        all_data d = modbus_manager.read_data();
-        if (user_set_level > d.co2_data) {
-            printf("CO2 below user set limit opening the valve\n");
-            printf("user set limit: %.f\n");
+        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            sp = user_set_level;
+            xSemaphoreGive(user_level_mutex);
+        }
+        all_data d = m.read_data();
+        float target_low = sp - DB;   // Alempi tavoite: sp - 40
+        float target_high = sp + DB;
 
-           // d = modbus_manager.valve_open(user_set_level);
-        } if (d.co2_data> user_set_level) {
-            printf("CO2 above user set limit opening the valve\n");
-            printf("user set limit: %.f\n");
+        if (sp == 0) {
+            printf("Could not read user set level" );
+        }else {
+
+
+        }
+        if (d.co2_data >= 2000) {
+            m.fan_on(100);
+            m.valve_close();// make sure the valve is closed
+        }
+        else if (d.co2_data > target_high) {
+            float difference = d.co2_data - sp;
+            if (difference > 50) {
+                m.fan_on(100);  // Dynamic fan speeds based on the co2 difference
+                m.valve_close();
+            } else {
+                m.fan_on(50);
+                m.valve_close();
+            }
+            //wanted state
+        } else if (d.co2_data >= target_low && d.co2_data <= target_high) {
+            m.fan_off(); // make sure evertihng is closed
+            m.valve_close();
+
+
+        }else if (d.co2_data < target_low) {
+            m.fan_off();
+            m.valve_open(); // valve_open has built in wait time for letting the co2 set
         }
 
-        xQueueSend(data_queue, &d, portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        xQueueSend(ui_queue, &d, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
@@ -162,6 +198,7 @@ void display_task(void *param) {
     all_data d{};
     all_data last_data{};  // save the last data
     char line[64];
+
     EEPROM_24C256 eeprom(i2c0);
     bool eeprom_read = false;
     uint16_t co2_setpoint = 0;
@@ -179,48 +216,48 @@ void display_task(void *param) {
             printf("EEPROM read failed, using default\n");
             eeprom_read = true; // Don't keep retrying if it fails
         }
+    }
 
-        while (true) {
-            // check for new data if not print old data
-            if (xQueueReceive(data_queue, &d, pdMS_TO_TICKS(50)) == pdTRUE) {
-                last_data = d; // update last data
-            }
-
-            display.fill(0);
-
-            //
-            snprintf(line,sizeof(line),"CO2:%.1f ppm", last_data.co2_data);
-            display.text(line,0,0);
-
-            snprintf(line,sizeof(line),"RH: %.1f %%", last_data.hmp60_rh);
-            display.text(line,0,10);
-
-            snprintf(line,sizeof(line),"T: %.1f C", last_data.hmp60_t);
-            display.text(line,0,20);
-
-            uint16_t co2_setpoint;
-            if (eeprom.read_co2_setpoint(co2_setpoint)) {
-                snprintf(line, sizeof(line), "EEPROM: %u ppm", co2_setpoint);
-            } else {
-                snprintf(line, sizeof(line), "EEPROM: Error");
-            }
-            display.text(line, 0, 40);
-
-            // set level protected with semaphore
-            float level;
-            if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                level = user_set_level;
-                xSemaphoreGive(user_level_mutex);
-            } else {
-                level = 0; // fallback
-            }
-            snprintf(line,sizeof(line),"Set: %.1f ppm", level);
-            display.text(line,0,30);
-
-            display.show();
-
-            vTaskDelay(pdMS_TO_TICKS(200)); // update the screen 5 times a sec
+    while (true) {
+        // check for new data if not print old data
+        if (xQueueReceive(ui_queue, &d, pdMS_TO_TICKS(20)) == pdTRUE) {
+            last_data = d; // update last data
         }
+
+        display.fill(0);
+
+        //
+        snprintf(line,sizeof(line),"CO2:%.1f ppm", last_data.co2_data);
+        display.text(line,0,0);
+
+        snprintf(line,sizeof(line),"RH: %.1f %%", last_data.hmp60_rh);
+        display.text(line,0,10);
+
+        snprintf(line,sizeof(line),"T: %.1f C", last_data.hmp60_t);
+        display.text(line,0,20);
+
+        uint16_t co2_setpoint;
+        if (eeprom.read_co2_setpoint(co2_setpoint)) {
+            snprintf(line, sizeof(line), "EEPROM: %u ppm", co2_setpoint);
+        } else {
+            snprintf(line, sizeof(line), "EEPROM: Error");
+        }
+        display.text(line, 0, 40);
+
+        // set level protected with semaphore
+        float level;
+        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            level = user_set_level;
+            xSemaphoreGive(user_level_mutex);
+        } else {
+            level = 0; // fallback
+        }
+        snprintf(line,sizeof(line),"Set: %.1f ppm", level);
+        display.text(line,0,30);
+
+        display.show();
+
+        vTaskDelay(pdMS_TO_TICKS(200)); // update the screen 5 times a sec
     }
 }
 
