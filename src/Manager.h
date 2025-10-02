@@ -48,8 +48,6 @@ public:
       all_data read_data() {
             auto c  = co2.read_co2(); // {co2_data, status, ...}
             auto ht = hmp.read();// {rh, t, ok}
-            auto pulse = fan.poll_running();
-
 
             //updating the data
             all_data data;
@@ -57,9 +55,7 @@ public:
             data.hmp60_rh  = ht.rh;
             data.hmp60_t   = ht.t;
             data.status    = (c.status && ht.ok) ;
-            data.last_pulses = pulse.last_pulses;
             data.timestamp = xTaskGetTickCount();
-
             return data;
 
     }
@@ -73,22 +69,23 @@ public:
     void fan_off() {
         fan.set_percent(0);
     }
+    void valve_close() {
+        gpio_put(valve_pin, 0);
+
+    }
 
 
     // prototype needs work
-    void valve_open(  int open_ms = 2000, int set_ms = 5000){
+    void valve_open(  int open_ms = 1000, int set_ms = 2000){
             // open the valve and keep it open while we wait
             gpio_put(valve_pin, 1);
             vTaskDelay(pdMS_TO_TICKS(open_ms));
             //let the co2 levels even out
             //close the valve
             gpio_put(valve_pin, 0);
-        //let the levels settle
-            vTaskDelay(pdMS_TO_TICKS(set_ms));
+        vTaskDelay(pdMS_TO_TICKS(set_ms));// to let the levels setle
 
-        // make sure valve is closed at the end
-        gpio_put(valve_pin, 0);
-        return;
+
     }
 
 

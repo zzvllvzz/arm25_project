@@ -23,10 +23,13 @@ SemaphoreHandle_t gpio_sem;
 QueueHandle_t data_queue;
 QueueHandle_t user_queue;
 QueueHandle_t rotary_queue;
+QueueHandle_t ui_queue;
 
 
-SemaphoreHandle_t user_level_mutex;   // suojaus
-float user_set_level = 200;       // ppm
+SemaphoreHandle_t user_level_mutex;
+SemaphoreHandle_t modbus_mutex;
+// suojaus
+float user_set_level = 200;       // eeprom readings?
 
 
 void modbus_task(void *param);
@@ -34,6 +37,7 @@ void display_task(void *param);
 void i2c_task(void *param);
 void user_input_task(void *param);
 void rotary_task(void *param);
+void controller_task(void *param);
 extern "C" {
     void tls_test(void);
 }
@@ -52,23 +56,21 @@ int main()
     setup_rotary(); // rotary pins
 
     data_queue = xQueueCreate(1, sizeof(all_data));
+    ui_queue = xQueueCreate(1, sizeof(all_data));
     user_queue = xQueueCreate(1, sizeof(float));
     rotary_queue = xQueueCreate(1, sizeof(float));
+
     user_level_mutex = xSemaphoreCreateMutex();
+    modbus_mutex = xSemaphoreCreateMutex();
 
 
 
     gpio_sem = xSemaphoreCreateBinary();
 
 #if 1
-    xTaskCreate(modbus_task, "Modbus", 512, (void *) nullptr,
-    2, nullptr);
-
-
-    xTaskCreate(display_task, "SSD1306", 512,  (void *) nullptr,
-                tskIDLE_PRIORITY + 1, nullptr);
-    xTaskCreate(rotary_task, "rotary ", 512,  (void *) nullptr,
-                2, nullptr);
+    xTaskCreate(modbus_task, "Modbus", 2048, (void *) nullptr,3, nullptr);
+    xTaskCreate(display_task, "SSD1306", 1024,  (void *) nullptr,1, nullptr);
+    xTaskCreate(rotary_task, "rotary ", 512,  (void *) nullptr,3, nullptr);
 
 #endif
 #if 1
@@ -88,21 +90,6 @@ int main()
 #include "ModbusRegister.h"
 
 // We are using pins 0 and 1, but see the GPIO function select table in the
-// datasheet for information on which other pins can be used.
-#if 0
-#define UART_NR 0
-#define UART_TX_PIN 0
-#define UART_RX_PIN 1
-#else
-#define UART_NR 1
-#define UART_TX_PIN 4
-#define UART_RX_PIN 5
-#endif
-
-#define BAUD_RATE 9600
-#define STOP_BITS 2 // for real system (pico simualtor also requires 2 stop bits)
-
-#define USE_MODBUS
 
 void rotary_task(void *param) {
 
@@ -135,28 +122,38 @@ void rotary_task(void *param) {
 
 void modbus_task(void *param) {
     (void)param;
-    Manager modbus_manager;
+    Manager m;
+    const float DB = 50.0f;  // deadband ±50 ppm
+     float sp = 1000;
+
 
     for(;;) {
-        all_data d = modbus_manager.read_data();
-        if (user_set_level > d.co2_data) {
-            printf("CO2 below user set limit opening the valve\n");
-            printf("user set limit: %.f\n");
+        all_data d = m.read_data();
 
-           // d = modbus_manager.valve_open(user_set_level);
-        } if (d.co2_data> user_set_level) {
-            printf("CO2 above user set limit opening the valve\n");
-            printf("user set limit: %.f\n");
+        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            sp = user_set_level;
+            xSemaphoreGive(user_level_mutex);
         }
 
-        xQueueSend(data_queue, &d, portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+       if (d.co2_data >=  2000) {
+              m.fan_on(100);
+           m.valve_close();// make sure the valve is closed
+       }else {
+            if (sp + DB <= d.co2_data ) {
+                m.fan_on(100);
+                m.valve_close();
+            }else if (sp - DB >= d.co2_data) {
+                m.fan_off();
+                m.valve_open();
+            }
+       }
+
+        d  = m.read_data(); // update the data
+
+        xQueueSend(ui_queue, &d, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
-
-
-
-
 
 #include "ssd1306os.h"
 void display_task(void *param)
@@ -169,31 +166,31 @@ void display_task(void *param)
 
     while (true) {
         // check for new data if not print old data
-        if (xQueueReceive(data_queue, &d, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (xQueueReceive(ui_queue, &d, pdMS_TO_TICKS(20)) == pdTRUE) {
             last_data = d; // update last data
         }
 
         display.fill(0);
 
         //
-        snprintf(line,sizeof(line),"CO2:%.1f ppm", last_data.co2_data);
+        snprintf(line,sizeof(line),"CO2:%.2f ppm", last_data.co2_data);
         display.text(line,0,0);
 
-        snprintf(line,sizeof(line),"RH: %.1f %%", last_data.hmp60_rh);
+        snprintf(line,sizeof(line),"RH: %.2f %%", last_data.hmp60_rh);
         display.text(line,0,10);
 
-        snprintf(line,sizeof(line),"T: %.1f C", last_data.hmp60_t);
+        snprintf(line,sizeof(line),"T: %.2f C", last_data.hmp60_t);
         display.text(line,0,20);
 
         // set level protected with semaphore
         float level;
-        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xSemaphoreTake(user_level_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
             level = user_set_level;
             xSemaphoreGive(user_level_mutex);
         } else {
             level = 0; // fallback
         }
-        snprintf(line,sizeof(line),"Set: %.1f ppm", level);
+        snprintf(line,sizeof(line),"Set: %.2f ppm", level);
         display.text(line,0,30);
 
         display.show();
