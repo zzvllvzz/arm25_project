@@ -1,6 +1,5 @@
 #include "eeprom.h"
 #include <cstdio>
-
 #include "queue.h"
 
 extern QueueHandle_t user_queue;
@@ -160,8 +159,8 @@ void eepromTask(void *param) {
         float setpoint_float = (float)current_ppm;
         xQueueOverwrite(user_queue, &setpoint_float);
     } else {
-        printf("No stored setpoint, initializing with 400 ppm\n");
-        eeprom.write_co2_setpoint(400);
+        printf("No stored setpoint, initializing with 200 ppm\n");
+        eeprom.write_co2_setpoint(200);
     }
 
     // Main loop - store new setpoints from queue

@@ -30,7 +30,7 @@ class Fan {
         return pct;
     }
     FanState poll_running() {
-        uint16_t pulses = ao1_counter.read(); // nollaa laskurin samalla
+        uint16_t pulses = ao1_counter.read(); //  Broken
         cached.last_pulses = pulses;
         cached.running = (pulses > 0);
         return cached;

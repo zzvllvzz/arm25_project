@@ -11,14 +11,15 @@
 #include "Manager.h" // for struct all_data
 
 // Queues/vars defined in main.cpp
-extern QueueHandle_t data_queue;
+extern QueueHandle_t ui_queue;
 extern float user_set_level;
 extern SemaphoreHandle_t user_level_mutex;
+extern QueueHandle_t user_queue;
 
 #define THINGSPEAK_WRITE_KEY "IWJ871L0TMWUKKI2"
 #define THINGSPEAK_SERVER    "api.thingspeak.com"
 #define TALKBACK_ID          "55377"
-#define TALKBACK_API_KEY     "IQ8PEVJEEXQA0GEP"
+#define TALKBACK_API_KEY     "3M1MMIOO2AOWR0O6"
 
 // DigiCert Global Root G2 (for api.thingspeak.com)
 #define THINGSPEAK_CERT "-----BEGIN CERTIFICATE-----\n" \
@@ -57,7 +58,7 @@ void cloud_task(void *param) {
     while (true) {
         // 1) Read latest sensor frame without consuming the queue
 
-        if (xQueuePeek(data_queue, &d, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (xQueuePeek(ui_queue, &d, pdMS_TO_TICKS(1000)) == pdTRUE) {
 
             // Read user_set_level with a mutex (non-blocking fallback to current)
             float level = 0.0f;
@@ -70,9 +71,9 @@ void cloud_task(void *param) {
 
             // 2) POST latest data to ThingSpeak (field5 = user_set_level)
             int n = snprintf(body, sizeof(body),
-                             "api_key=%s&field1=%.2f&field2=%.2f&field3=%.2f&field5=%.2f",
+                             "api_key=%s&field1=%.2f&field2=%.2f&field3=%.2f&field4=%.2f&field5=%.2f",
                              THINGSPEAK_WRITE_KEY,
-                             d.co2_data, d.hmp60_rh, d.hmp60_t, level);
+                             d.co2_data, d.hmp60_rh, d.hmp60_t, d.fan_percent, level);
             if (n < 0 || n >= (int)sizeof(body)) {
                 printf("[CLOUD] body overflow (%d)\n", n);
                 vTaskDelay(pdMS_TO_TICKS(2000));
@@ -99,10 +100,15 @@ void cloud_task(void *param) {
 
             // 3) GET TalkBack command and update user_set_level if present
             n = snprintf(request, sizeof(request),
-                         "GET /talkbacks/%s/commands/execute.json?api_key=%s HTTP/1.1\r\n"
-                         "Host: %s\r\n"
-                         "Connection: close\r\n\r\n",
-                         TALKBACK_ID, TALKBACK_API_KEY, THINGSPEAK_SERVER);
+             "POST /talkbacks/%s/commands/execute.json HTTP/1.1\r\n"
+             "Host: %s\r\n"
+             "Connection: close\r\n"
+             "Content-Type: application/x-www-form-urlencoded\r\n"
+             "Content-Length: %d\r\n\r\n"
+             "api_key=%s",
+             TALKBACK_ID, THINGSPEAK_SERVER,
+             (int)strlen("api_key=" TALKBACK_API_KEY),
+             TALKBACK_API_KEY);
             if (n < 0 || n >= (int)sizeof(request)) {
                 printf("[CLOUD] talkback req overflow (%d)\n", n);
                 vTaskDelay(pdMS_TO_TICKS(2000));
@@ -113,7 +119,7 @@ void cloud_task(void *param) {
                                 (const uint8_t*)things_cert, sizeof(things_cert),
                                 THINGSPEAK_SERVER, request, 15);
             if (cmd_resp) {
-                // printf("[CLOUD] TalkBack response:\n%s\n", cmd_resp);
+                printf("[CLOUD] TalkBack response:\n%s\n", cmd_resp);
 
                 char *pos = strstr(cmd_resp, "\"command_string\":\"");
                 if (pos) {
@@ -133,6 +139,7 @@ void cloud_task(void *param) {
                             user_set_level = new_set;
                         }
                         printf("[CLOUD] user_set_level updated to %.1f ppm\n", user_set_level);
+                        xQueueSend(user_queue,&new_set,0);
                     }
                 }
                 free(cmd_resp);
@@ -141,7 +148,7 @@ void cloud_task(void *param) {
             }
         }
 
-        //
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        //every 15s sceconds the server can request the command and send data
+        vTaskDelay(pdMS_TO_TICKS(20000));
     }
 }

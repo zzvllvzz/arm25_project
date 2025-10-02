@@ -7,6 +7,7 @@
 #include "hmp60.h"
 #include "PicoOsUart.h"
 #include "Fan.h"
+#include "hardware/gpio.h"
 #ifndef RP2040_FREERTOS_IRQ_MANGER_H
 #define RP2040_FREERTOS_IRQ_MANGER_H
 #define valve_pin 27
@@ -22,8 +23,11 @@ struct all_data {
     uint32_t timestamp;
     bool fan_running;
     int last_pulses;
+    float fan_percent;
 
 };
+
+
 
 
 
@@ -41,6 +45,7 @@ public:
         gpio_init(valve_pin);
         gpio_set_dir(valve_pin, GPIO_OUT); // valve init
         gpio_put(valve_pin, 0);
+        fan_percent_cached = 0.0f;
     }
 
 
@@ -48,18 +53,16 @@ public:
       all_data read_data() {
             auto c  = co2.read_co2(); // {co2_data, status, ...}
             auto ht = hmp.read();// {rh, t, ok}
-            auto pulse = fan.poll_running();
-
-
+            // auto f=fan.poll_running();
             //updating the data
             all_data data;
             data.co2_data  = c.co2_data;
             data.hmp60_rh  = ht.rh;
             data.hmp60_t   = ht.t;
             data.status    = (c.status && ht.ok) ;
-            data.last_pulses = pulse.last_pulses;
             data.timestamp = xTaskGetTickCount();
-
+            data.fan_percent = fan_percent_cached;
+            data.fan_running = (fan_percent_cached > 0.0f);
             return data;
 
     }
@@ -69,26 +72,29 @@ public:
     void fan_on(float fan_speed) {
 
         fan.set_percent(fan_speed);
+        fan_percent_cached = fan_speed;
     }
     void fan_off() {
         fan.set_percent(0);
+        fan_percent_cached = 0.0f;
+    }
+    void valve_close() {
+        gpio_put(valve_pin, 0);
+
     }
 
 
     // prototype needs work
-    void valve_open(  int open_ms = 2000, int set_ms = 5000){
+    void valve_open(  int open_ms = 1000, int set_ms = 2000){
             // open the valve and keep it open while we wait
             gpio_put(valve_pin, 1);
             vTaskDelay(pdMS_TO_TICKS(open_ms));
             //let the co2 levels even out
             //close the valve
             gpio_put(valve_pin, 0);
-        //let the levels settle
-            vTaskDelay(pdMS_TO_TICKS(set_ms));
+        vTaskDelay(pdMS_TO_TICKS(set_ms));// to let the levels setle
 
-        // make sure valve is closed at the end
-        gpio_put(valve_pin, 0);
-        return;
+
     }
 
 
@@ -102,6 +108,7 @@ private:
     Gmp252_co2 co2;   // needs a client in the constructor
     Hmp60sensor hmp;//needs a client in the constructor
     Fan fan;
+    float fan_percent_cached{0.0f};
 
 
 };
