@@ -1,9 +1,9 @@
 
 
-#ifndef RP2040_FREERTOS_IRQ_HMP60_H
-#define RP2040_FREERTOS_IRQ_HMP60_H
+#ifndef HMP60_H
+#define HMP60_H
 
-#endif //RP2040_FREERTOS_IRQ_HMP60_H
+
 
 #include<memory>
 #include"modbus/ModbusRegister.h"
@@ -34,3 +34,5 @@ private:
     ModbusRegister rh_reg;
     ModbusRegister  t_reg;
 };
+
+#endif // HMP60_H

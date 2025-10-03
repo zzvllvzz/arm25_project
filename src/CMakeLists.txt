@@ -1,5 +1,4 @@
 add_executable(${ProjectName}
-        main.cpp
         critical_section.cpp
         Fmutex.cpp
         Fmutex.h
@@ -34,6 +33,18 @@ add_executable(${ProjectName}
 #        display/ssd1306.h
         display/ssd1306os.h
         display/ssd1306os.cpp
+        ipstack/IPStack.cpp
+        CloudTask.h
+        CloudTask.cpp
+        WifiTask.cpp
+        WifiTask.h
+        tls_client.h
+        sdp610.cpp
+        main.cpp
+        eeprom.cpp
+        eeprom.h
+
+
 )
 
 target_include_directories(${ProjectName} PRIVATE
