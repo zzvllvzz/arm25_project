@@ -23,6 +23,9 @@ typedef struct TLS_CLIENT_T_ {
     int error;
     const char *http_request;
     int timeout;
+
+    char *response_buf;
+    size_t response_len;
 } TLS_CLIENT_T;
 
 static struct altcp_tls_config *tls_config = NULL;
@@ -32,6 +35,11 @@ static err_t tls_client_close(void *arg) {
     err_t err = ERR_OK;
 
     state->complete = true;
+    // if (state->response_buf) {
+    //     free(state->response_buf);
+    //     state->response_buf = NULL;
+    //     state->response_len = 0;
+    // }
     if (state->pcb != NULL) {
         altcp_arg(state->pcb, NULL);
         altcp_poll(state->pcb, NULL, 0);
@@ -92,13 +100,24 @@ static err_t tls_client_recv(void *arg, struct altcp_pcb *pcb, struct pbuf *p, e
            Do be aware that the amount of data can potentially be a bit large (TLS record size can be 16 KB),
            so you may want to use a smaller fixed size buffer and copy the data to it using a loop, if memory is a concern */
         //char buf[p->tot_len + 1];
-        char *buf= (char *) malloc(p->tot_len + 1);
+        size_t old_len=state->response_len;
+        size_t add_len=p->tot_len;
+        char *new_buf= (char *) malloc(old_len+add_len+1);
+        if (!new_buf) {
+            printf("malloc failed\n");
+            return tls_client_close(state);
+        }
+        if (state->response_buf&&old_len) {
+            memcpy(new_buf, state->response_buf, old_len);
+            free(state->response_buf);
+        }
+        pbuf_copy_partial(p, new_buf+old_len, p->tot_len, 0);
+        new_buf[old_len+add_len] = '\0';
+        printf("***\nnew data received from server:\n***\n\n%s\n", state->response_buf);
+        state->response_buf = new_buf;
+        state->response_len=old_len+add_len;
 
-        pbuf_copy_partial(p, buf, p->tot_len, 0);
-        buf[p->tot_len] = 0;
-
-        printf("***\nnew data received from server:\n***\n\n%s\n", buf);
-        free(buf);
+        // free(buf);
 
         altcp_recved(pcb, p->tot_len);
     }
@@ -174,7 +193,7 @@ static bool tls_client_open(const char *hostname, void *arg) {
     else if (err != ERR_INPROGRESS)
     {
         printf("error initiating DNS resolving, err=%d\n", err);
-        tls_client_close(state->pcb);
+        tls_client_close(state);
     }
 
     cyw43_arch_lwip_end();
@@ -189,6 +208,8 @@ static TLS_CLIENT_T* tls_client_init(void) {
         printf("failed to allocate state\n");
         return NULL;
     }
+    state->response_buf = NULL;
+    state->response_len = 0;
 
     return state;
 }
@@ -240,4 +261,41 @@ bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *serve
     free(state);
     altcp_tls_free_config(tls_config);
     return err == 0;
+}
+char *run_tls_client_request(const uint8_t *cert, size_t cert_len, const char *server, const char *request, int timeout ) {
+ tls_config = altcp_tls_create_config_client(cert, cert_len);
+    if (!tls_config) {
+        printf("failed to allocate config\n");
+        return 0;
+    }
+   mbedtls_ssl_conf_authmode((mbedtls_ssl_config *)tls_config, MBEDTLS_SSL_VERIFY_REQUIRED);
+    TLS_CLIENT_T *state = tls_client_init();
+    if (!state) {
+        altcp_tls_free_config(tls_config);
+        return 0;
+    }
+    state->http_request = request;
+    state->timeout = timeout;
+    if (!tls_client_open(server, state)) {
+        free(state);
+        return 0;
+    }
+    while(!state->complete) {
+#if PICO_CYW43_ARCH_POLL
+        cyw43_arch_poll();
+        cyw43_arch_wait_for_work_until(make_timeout_time_ms(100));
+#else
+        vTaskDelay(pdMS_TO_TICKS(100));
+#endif
+    }
+    int err = state->error;
+    char *resp=NULL;
+    if (err ==0&&state->response_buf) {
+        resp=state->response_buf;
+        state->response_buf=NULL;
+        state->response_len=0;
+    }
+    free(state);
+    altcp_tls_free_config(tls_config);
+    return resp;
 }
